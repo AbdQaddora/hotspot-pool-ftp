@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, events, type ServerStatus, type LogEvent, type NetInterface, type StatsEvent } from "@/lib/tauri";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { api, events, type HotspotInfo, type ServerStatus, type LogEvent, type NetInterface, type StatsEvent } from "@/lib/tauri";
 
 const MAX_LOG = 400;
 const SPARK_POINTS = 60;
@@ -14,9 +15,25 @@ export function useServer() {
   const [interfaces, setInterfaces] = useState<NetInterface[]>([]);
   const [selectedIp, setSelectedIp] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [phase, setPhase] = useState<"idle" | "hotspot" | "server" | "stopping">("idle");
   const [error, setError] = useState<string | null>(null);
+  const [hotspot, setHotspot] = useState<HotspotInfo>({ supported: false, state: "unknown", ssid: null, passphrase: null, clientCount: null, wifiQr: null, error: null });
+  const [autoHotspot, setAutoHotspot] = useState(true);
+  const [hotspotStartedByUs, setHotspotStartedByUs] = useState(false);
+  const autoRef = useRef(true);
+  autoRef.current = autoHotspot;
+  const startedRef = useRef(false);
+  startedRef.current = hotspotStartedByUs;
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selectedIp;
+
+  const refreshHotspot = useCallback(async () => {
+    try {
+      setHotspot(await api.getHotspotInfo());
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   const refreshInterfaces = useCallback(async () => {
     const list = await api.getNetworkInterfaces();
@@ -29,10 +46,15 @@ export function useServer() {
     let alive = true;
     const unsubs: Array<() => void> = [];
     (async () => {
-      await refreshInterfaces();
+      await Promise.all([refreshInterfaces(), refreshHotspot()]);
       const s = await api.getServerStatus();
       if (alive) setStatus(s);
-      unsubs.push(await events.onStatus((e) => setStatus(e)));
+      unsubs.push(
+        await events.onStatus((e) => {
+          setStatus(e);
+          refreshHotspot();
+        }),
+      );
       unsubs.push(
         await events.onStats((e) => {
           setStats(e);
@@ -48,41 +70,95 @@ export function useServer() {
         }),
       );
     })();
-    const timer = window.setInterval(refreshInterfaces, 8000);
+    const timer = window.setInterval(() => {
+      refreshInterfaces();
+      refreshHotspot();
+    }, 8000);
     return () => {
       alive = false;
       window.clearInterval(timer);
       unsubs.forEach((u) => u());
     };
-  }, [refreshInterfaces]);
+  }, [refreshInterfaces, refreshHotspot]);
 
+  const fail = (e: unknown) => {
+    setError(String(e));
+    setLogs((l) => [...l, { ts: Date.now(), level: "error", kind: "error", message: String(e), client: null, path: null, bytes: null }]);
+  };
+
+  /** One click: hotspot on (when automated), wait for its adapter, start the server. */
   const start = useCallback(async () => {
     setBusy(true);
     setError(null);
+    setPhase(autoRef.current ? "hotspot" : "server");
     try {
-      const s = await api.startServer(selectedRef.current ?? undefined);
-      setStatus(s);
+      // When the user picked an adapter that already is a hotspot gateway, bind to it directly.
+      const pickIp = selectedRef.current ?? undefined;
+      const r = autoRef.current ? await api.autoShare(undefined) : await api.autoShare(pickIp);
+      setStatus(r.status);
+      setHotspot(r.hotspot);
+      setHotspotStartedByUs(r.hotspotStarted);
       setHistory(Array(SPARK_POINTS).fill(0));
+      await refreshInterfaces();
     } catch (e) {
-      setError(String(e));
-      setLogs((l) => [...l, { ts: Date.now(), level: "error", kind: "error", message: String(e), client: null, path: null, bytes: null }]);
+      fail(e);
     } finally {
       setBusy(false);
+      setPhase("idle");
     }
-  }, []);
+  }, [refreshInterfaces]);
 
   const stop = useCallback(async () => {
     setBusy(true);
+    setPhase("stopping");
     try {
-      const s = await api.stopServer();
-      setStatus(s);
+      const r = await api.stopShare(autoRef.current && startedRef.current);
+      setStatus(r.status);
+      setHotspot(r.hotspot);
+      setHotspotStartedByUs(false);
       setStats(idleStats);
+    } catch (e) {
+      fail(e);
+    } finally {
+      setBusy(false);
+      setPhase("idle");
+    }
+  }, []);
+
+  const toggleHotspot = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setHotspot(await api.setHotspot(hotspot.state !== "on"));
+      await refreshInterfaces();
+    } catch (e) {
+      fail(e);
     } finally {
       setBusy(false);
     }
+  }, [hotspot.state, refreshInterfaces]);
+
+  const configureHotspot = useCallback(async (ssid: string, passphrase: string) => {
+    setError(null);
+    try {
+      setHotspot(await api.configureHotspot(ssid, passphrase));
+      return true;
+    } catch (e) {
+      fail(e);
+      return false;
+    }
+  }, []);
+
+  const openHotspotSettings = useCallback(async () => {
+    const url = await api.hotspotSettingsUrl();
+    if (url) await openUrl(url);
   }, []);
 
   const toggle = useCallback(() => (status.running ? stop() : start()), [status.running, start, stop]);
 
-  return { status, stats, history, logs, interfaces, selectedIp, setSelectedIp, busy, error, start, stop, toggle, refreshInterfaces, clearLogs: () => setLogs([]) };
+  return {
+    status, stats, history, logs, interfaces, selectedIp, setSelectedIp, busy, phase, error, start, stop, toggle, refreshInterfaces,
+    hotspot, autoHotspot, setAutoHotspot, toggleHotspot, configureHotspot, openHotspotSettings, refreshHotspot,
+    clearLogs: () => setLogs([]), dismissError: () => setError(null),
+  };
 }

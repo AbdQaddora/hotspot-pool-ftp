@@ -47,7 +47,29 @@ export interface StatsEvent {
   totalBytes: number;
 }
 
+export interface HotspotInfo {
+  supported: boolean;
+  state: "on" | "off" | "transition" | "unknown" | "unsupported";
+  ssid: string | null;
+  passphrase: string | null;
+  clientCount: number | null;
+  wifiQr: string | null;
+  error: string | null;
+}
+
+export interface ShareResult {
+  hotspot: HotspotInfo;
+  status: ServerStatus;
+  hotspotStarted: boolean;
+}
+
 export const api = {
+  getHotspotInfo: () => invoke<HotspotInfo>("get_hotspot_info"),
+  setHotspot: (on: boolean) => invoke<HotspotInfo>("set_hotspot", { on }),
+  configureHotspot: (ssid: string, passphrase: string) => invoke<HotspotInfo>("configure_hotspot", { ssid, passphrase }),
+  hotspotSettingsUrl: () => invoke<string>("hotspot_settings_url"),
+  autoShare: (ip?: string) => invoke<ShareResult>("auto_share", { ip: ip ?? null }),
+  stopShare: (turnOffHotspot: boolean) => invoke<ShareResult>("stop_share", { turnOffHotspot }),
   getNetworkInterfaces: () => invoke<NetInterface[]>("get_network_interfaces"),
   getHotspotInterface: () => invoke<NetInterface | null>("get_hotspot_interface"),
   startServer: (ip?: string, port?: number) => invoke<ServerStatus>("start_server", { ip: ip ?? null, port: port ?? null }),
@@ -71,6 +93,12 @@ export const DEFAULT_PORT = 8080;
 export function shareUrl(status: ServerStatus, fallbackIp: string | null): string | null {
   if (status.url) return status.url;
   return fallbackIp ? `http://${fallbackIp}:${DEFAULT_PORT}` : null;
+}
+
+/** Wi-Fi join payload for QR codes (understood by iOS and Android cameras). */
+export function wifiQr(ssid: string, passphrase: string | null): string {
+  const esc = (s: string) => s.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/:/g, "\\:").replace(/"/g, '\\"');
+  return passphrase ? `WIFI:T:WPA;S:${esc(ssid)};P:${esc(passphrase)};;` : `WIFI:T:nopass;S:${esc(ssid)};;`;
 }
 
 /** Direct link for a pooled item: files download, folders open in the web page. */

@@ -9,10 +9,13 @@ import type { ServerStatus } from "@/lib/tauri";
 interface Props {
   status: ServerStatus;
   busy: boolean;
+  phase?: "idle" | "hotspot" | "server" | "stopping";
   onToggle: () => void;
 }
 
-export function TopBar({ status, busy, onToggle }: Props) {
+const PHASE_LABEL = { idle: "", hotspot: "STARTING HOTSPOT…", server: "STARTING SERVER…", stopping: "STOPPING…" } as const;
+
+export function TopBar({ status, busy, phase = "idle", onToggle }: Props) {
   const win = getCurrentWindow();
   const [maximized, setMaximized] = useState(false);
 
@@ -48,7 +51,7 @@ export function TopBar({ status, busy, onToggle }: Props) {
             <span className={cn("relative inline-flex h-2 w-2 rounded-full", status.running ? "bg-live" : "bg-muted-foreground/40")} />
           </span>
           <span className={cn("text-[11.5px] font-medium", status.running ? "text-live" : "text-muted-foreground")}>
-            {busy ? "…" : status.running ? "SERVER ON" : "SERVER OFF"}
+            {busy ? PHASE_LABEL[phase] || "…" : status.running ? "SHARING" : "NOT SHARING"}
           </span>
         </div>
         <Switch checked={status.running} disabled={busy} onCheckedChange={onToggle} aria-label="Toggle sharing server" />

@@ -17,7 +17,7 @@ export default function App() {
   return (
     <TooltipProvider delayDuration={300}>
       <div className="flex h-full flex-col overflow-hidden rounded-[10px] border border-border bg-background">
-        <TopBar status={server.status} busy={server.busy} onToggle={server.toggle} />
+        <TopBar status={server.status} busy={server.busy} phase={server.phase} onToggle={server.toggle} />
         <div className="flex min-h-0 flex-1">
           <Sidebar
             status={server.status}
@@ -26,17 +26,30 @@ export default function App() {
             interfaces={server.interfaces}
             selectedIp={server.selectedIp}
             onSelectIp={server.setSelectedIp}
-            onRefresh={server.refreshInterfaces}
+            onRefresh={() => {
+              server.refreshInterfaces();
+              server.refreshHotspot();
+            }}
+            hotspot={server.hotspot}
+            busy={server.busy}
+            autoHotspot={server.autoHotspot}
+            onAutoHotspot={server.setAutoHotspot}
+            onToggleHotspot={server.toggleHotspot}
+            onConfigureHotspot={server.configureHotspot}
+            onOpenHotspotSettings={server.openHotspotSettings}
           />
           <PoolManager
             items={pool.items}
             status={server.status}
             dragging={dragging}
-            error={pool.error}
+            error={pool.error ?? server.error}
             onAddFiles={pool.addFiles}
             onAddFolders={pool.addFolders}
             onRemove={pool.remove}
-            onDismissError={pool.dismissError}
+            onDismissError={() => {
+              pool.dismissError();
+              server.dismissError();
+            }}
           />
         </div>
         <StatusBar status={server.status} totalSize={pool.totalSize} pending={pool.pending} itemCount={pool.items.length} logs={server.logs} />

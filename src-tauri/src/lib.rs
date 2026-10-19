@@ -1,9 +1,13 @@
+mod hotspot;
 mod http;
 mod network;
 mod pool;
 mod vpath;
 
+use hotspot::HotspotInfo;
 use http::{ServerEngine, ServerStatus};
+use serde::Serialize;
+use std::time::Duration;
 use network::NetInterface;
 use pool::{PoolItem, PoolState};
 use std::sync::Arc;
@@ -88,6 +92,100 @@ fn remove_path_from_pool(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, i
     pool.items()
 }
 
+#[tauri::command]
+async fn get_hotspot_info() -> HotspotInfo {
+    tauri::async_runtime::spawn_blocking(hotspot::info).await.unwrap_or_else(|e| HotspotInfo::unsupported(e.to_string()))
+}
+
+#[tauri::command]
+async fn set_hotspot(app: AppHandle, on: bool) -> Result<HotspotInfo, String> {
+    http::emit_log(&app, "info", "server", if on { "Turning on Mobile Hotspot…" } else { "Turning off Mobile Hotspot…" });
+    let info = tauri::async_runtime::spawn_blocking(move || hotspot::set_enabled(on)).await.map_err(|e| e.to_string())??;
+    http::emit_log(&app, "success", "server", format!("Hotspot {} ({})", info.state, info.ssid.clone().unwrap_or_default()));
+    Ok(info)
+}
+
+#[tauri::command]
+async fn configure_hotspot(ssid: String, passphrase: String) -> Result<HotspotInfo, String> {
+    if ssid.trim().is_empty() {
+        return Err("The hotspot name cannot be empty.".into());
+    }
+    if !passphrase.is_empty() && passphrase.chars().count() < 8 {
+        return Err("The password must be at least 8 characters.".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || hotspot::configure(ssid.trim(), &passphrase)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn hotspot_settings_url() -> String {
+    hotspot::settings_url().to_string()
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ShareResult {
+    hotspot: HotspotInfo,
+    status: ServerStatus,
+    /// True when this call turned the hotspot on (so stop can turn it off again).
+    hotspot_started: bool,
+}
+
+/// One-click flow: hotspot on (if we can), wait for its adapter, start the server.
+#[tauri::command]
+async fn auto_share(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, ip: Option<String>) -> Result<ShareResult, String> {
+    let mut info = tauri::async_runtime::spawn_blocking(hotspot::info).await.map_err(|e| e.to_string())?;
+    let mut hotspot_started = false;
+    if info.supported && info.state != "on" {
+        http::emit_log(&app, "info", "server", "Turning on Mobile Hotspot…");
+        info = tauri::async_runtime::spawn_blocking(|| hotspot::set_enabled(true)).await.map_err(|e| e.to_string())??;
+        hotspot_started = true;
+        http::emit_log(&app, "success", "server", format!("Hotspot \"{}\" is on", info.ssid.clone().unwrap_or_default()));
+    }
+
+    // Prefer the explicit adapter; otherwise wait for a hotspot gateway to appear.
+    let bind_ip = match ip {
+        Some(ip) => Some(ip),
+        None => {
+            let mut found = None;
+            for _ in 0..40 {
+                if let Some(i) = network::list_interfaces().into_iter().find(|i| i.is_hotspot) {
+                    found = Some(i.ip);
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+            if found.is_none() {
+                if info.supported {
+                    http::emit_log(&app, "warn", "server", "Hotspot adapter not found yet; using the best available adapter");
+                }
+                found = network::detect_hotspot().map(|i| i.ip);
+            }
+            found
+        }
+    };
+    let status = engine.start(app.clone(), bind_ip, None).await?;
+    Ok(ShareResult { hotspot: info, status, hotspot_started })
+}
+
+/// Stop the server and optionally turn the hotspot off again.
+#[tauri::command]
+async fn stop_share(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, turn_off_hotspot: bool) -> Result<ShareResult, String> {
+    let status = engine.stop(app.clone()).await;
+    let hotspot = if turn_off_hotspot {
+        http::emit_log(&app, "info", "server", "Turning off Mobile Hotspot…");
+        match tauri::async_runtime::spawn_blocking(|| hotspot::set_enabled(false)).await.map_err(|e| e.to_string())? {
+            Ok(i) => i,
+            Err(e) => {
+                http::emit_log(&app, "warn", "server", format!("Could not turn off the hotspot: {e}"));
+                tauri::async_runtime::spawn_blocking(hotspot::info).await.map_err(|e| e.to_string())?
+            }
+        }
+    } else {
+        tauri::async_runtime::spawn_blocking(hotspot::info).await.map_err(|e| e.to_string())?
+    };
+    Ok(ShareResult { hotspot, status, hotspot_started: false })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let engine = Arc::new(ServerEngine::new(Arc::new(PoolState::default())));
@@ -105,6 +203,12 @@ pub fn run() {
             get_pool,
             add_path_to_pool,
             remove_path_from_pool,
+            get_hotspot_info,
+            set_hotspot,
+            configure_hotspot,
+            hotspot_settings_url,
+            auto_share,
+            stop_share,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

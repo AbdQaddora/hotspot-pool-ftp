@@ -14,6 +14,8 @@ function emit(event: string, payload: unknown) {
 }
 
 let running = false;
+let hotspotOn = false;
+const hotspotInfo = () => ({ supported: true, state: hotspotOn ? "on" : "off", ssid: "ABD-Laptop", passphrase: "pool-2026-share", clientCount: hotspotOn ? 2 : 0, wifiQr: "WIFI:T:WPA;S:ABD-Laptop;P:pool-2026-share;;", error: null });
 let total = 0;
 let peak = 0;
 let connected = 0;
@@ -78,6 +80,29 @@ async function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<
       return ifaces;
     case "get_hotspot_interface":
       return ifaces[0];
+    case "get_hotspot_info":
+      return hotspotInfo();
+    case "set_hotspot":
+      hotspotOn = !!args.on;
+      log("success", "server", hotspotOn ? 'Hotspot "ABD-Laptop" is on' : "Hotspot off");
+      return hotspotInfo();
+    case "configure_hotspot":
+      return hotspotInfo();
+    case "hotspot_settings_url":
+      return "ms-settings:network-mobilehotspot";
+    case "auto_share": {
+      const started = !hotspotOn;
+      hotspotOn = true;
+      await new Promise((r) => setTimeout(r, 300));
+      startSim();
+      emit("server_status", ftpStatus());
+      return { hotspot: hotspotInfo(), status: ftpStatus(), hotspotStarted: started };
+    }
+    case "stop_share":
+      stopSim();
+      if (args.turnOffHotspot) hotspotOn = false;
+      emit("server_status", ftpStatus());
+      return { hotspot: hotspotInfo(), status: ftpStatus(), hotspotStarted: false };
     case "get_server_status":
       return ftpStatus();
     case "start_server":
@@ -130,6 +155,6 @@ async function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<
 
 // Auto-start the server after load when ?autostart is present (used for screenshots).
 if (new URLSearchParams(location.search).has("autostart")) {
-  setTimeout(() => invoke("start_server"), 400);
+  setTimeout(() => invoke("auto_share", {}), 400);
 }
 export {};

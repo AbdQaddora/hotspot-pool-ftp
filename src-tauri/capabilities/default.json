@@ -15,6 +15,10 @@
     "core:webview:allow-internal-toggle-devtools",
     "opener:default",
     "opener:allow-reveal-item-in-dir",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "http://*" }, { "url": "https://*" }, { "url": "ms-settings:*" }, { "url": "x-apple.systempreferences:*" }]
+    },
     "dialog:default",
     "dialog:allow-open",
     "clipboard-manager:allow-write-text"
