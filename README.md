@@ -6,16 +6,16 @@ Built with **Tauri v2 + Rust** (backend) and **React + Tailwind CSS v4 + shadcn-
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────┐
-│ ● Hotspot Pool FTP                        ● SERVER ON  [toggle]   – ▢ ✕  │
-├──────────────┬────────────────────────────────────────────────────────────┤
-│ HOTSPOT      │ Shared Pool            [+ Add Folders] [+ Add Files]       │
-│ 192.168.137.1│ ─────────────────────────────────────────────────────────  │
-│ :8080        │ ▶ Videos        D:\Media\Videos            12.4 GB  ⧉ ⌂ ✕ │
-│ [QR code]    │ ▪ report.pdf    C:\Users\me\Docs\report.pdf 1.2 MB  ⧉ ⌂ ✕ │
-│ 2 connected  │                                                            │
-│ 11.3 MB/s ▁▃▅│                 (drop files anywhere)                      │
-├──────────────┴────────────────────────────────────────────────────────────┤
-│ HTTP 8080 · Pool 2 items · Total 12.4 GB        12:01:07 DOWNLOAD a.mp4   │
+│ ● Hotspot Pool FTP                      ● SHARING  [toggle]      – ▢ ✕   │
+├──────────┬────────────────────────────────────────────────────────────────┤
+│ Share    │  Sharing is on                              [ Stop sharing ]   │
+│ Pool   5 │  Phones on ABD-Laptop can type abdu.link                      │
+│ Activity │  LINK FOR THE PHONE   http://abdu.link            ⧉  Open     │
+│ Settings │  ┌ 1 · Join the Wi-Fi ──────┐ ┌ 2 · Open the page ──────────┐ │
+│          │  │ [QR]  Network  ABD-Laptop│ │ [QR]  Type this  abdu.link  │ │
+│ ● Sharing│  │       Password ••••••••  │ │                             │ │
+├──────────┴────────────────────────────────────────────────────────────────┤
+│ HTTP 80 · Pool 5 items · 15.9 GB                 16:35 DOWNLOAD a.mp4    │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -61,7 +61,8 @@ src-tauri/src
 src-tauri/web/index.html   the phone page (embedded into the binary)
 src
 ├── hooks/       useServer (status/stats/log listeners), usePool, useDragDrop
-├── components/  TopBar, Sidebar (adapter, QR, metrics), PoolManager, StatusBar
+├── components/  TopBar, Nav (Share · Pool · Activity · Settings), PoolManager, StatusBar
+├── components/tabs/  ShareTab (hero, link, QR steps), ActivityTab (tiles, sparkline, log), SettingsTab
 └── lib/tauri.ts typed invoke/listen wrappers
 ```
 

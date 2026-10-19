@@ -96,7 +96,7 @@ export function PoolManager({ items, status, dragging, error, onAddFiles, onAddF
   return (
     <main className="relative flex min-w-0 flex-1 flex-col bg-background">
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
-        <h2 className="text-[13px] font-semibold tracking-tight">Shared Pool</h2>
+        <h2 className="text-[13px] font-semibold tracking-tight">Pool</h2>
         <Badge variant="mono">
           {folders} folders · {files} files
         </Badge>

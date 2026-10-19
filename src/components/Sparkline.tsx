@@ -21,7 +21,8 @@ export function Sparkline({ data, height = 44 }: Props) {
       <svg
         viewBox={`0 0 ${w} ${height}`}
         preserveAspectRatio="none"
-        className="block h-11 w-full"
+        className="block w-full"
+        style={{ height }}
         onMouseMove={(e) => {
           const r = e.currentTarget.getBoundingClientRect();
           setHover(Math.round(((e.clientX - r.left) / r.width) * (data.length - 1)));
