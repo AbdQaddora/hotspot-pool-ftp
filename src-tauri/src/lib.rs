@@ -4,7 +4,6 @@ mod names;
 mod network;
 mod pool;
 mod settings;
-mod tls;
 mod vpath;
 
 use hotspot::HotspotInfo;
@@ -105,7 +104,8 @@ fn get_settings(engine: State<'_, Arc<ServerEngine>>) -> Settings {
 #[tauri::command]
 async fn set_settings(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, settings: Settings) -> Result<Settings, String> {
     let name = Settings::validate_label(&settings.name)?;
-    let next = Settings { name, ..settings };
+    let suffix = Settings::validate_suffix(&settings.suffix)?;
+    let next = Settings { name, suffix, ..settings };
     next.save(&config_dir(&app)?)?;
     let name_changed = engine.set_settings(next.clone());
     if engine.status().running {
@@ -246,7 +246,7 @@ pub fn run() {
         .setup(|app| {
             let dir = app.path().app_config_dir().unwrap_or_else(|_| std::env::temp_dir().join("hotspot-pool"));
             let settings = Settings::load(&dir);
-            app.manage(Arc::new(ServerEngine::new(Arc::new(PoolState::default()), dir, settings)));
+            app.manage(Arc::new(ServerEngine::new(Arc::new(PoolState::default()), settings)));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

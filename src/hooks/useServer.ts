@@ -8,8 +8,8 @@ const SPARK_POINTS = 60;
 const idleStats: StatsEvent = { speedBps: 0, peakBps: 0, connected: 0, activeTransfers: 0, totalBytes: 0 };
 
 export function useServer() {
-  const [status, setStatus] = useState<ServerStatus>({ running: false, ip: null, port: null, url: null, httpsPort: null, name: null, nameUrl: null, nameResolves: null, hostnameUrl: null });
-  const [settings, setSettingsState] = useState<Settings>({ name: "share", preferHttps: true, autoHotspot: true });
+  const [status, setStatus] = useState<ServerStatus>({ running: false, ip: null, port: null, url: null, name: null, nameUrl: null, nameResolves: null, hostnameUrl: null });
+  const [settings, setSettingsState] = useState<Settings>({ name: "share", suffix: "link", autoHotspot: true });
   const [nameBusy, setNameBusy] = useState(false);
   const [stats, setStats] = useState<StatsEvent>(idleStats);
   const [history, setHistory] = useState<number[]>(() => Array(SPARK_POINTS).fill(0));

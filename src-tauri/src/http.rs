@@ -6,7 +6,6 @@ use crate::{
     names,
     pool::PoolState,
     settings::Settings,
-    tls,
     vpath::{self, Entry, Resolved},
 };
 use axum::{
@@ -22,7 +21,6 @@ use std::{
     collections::HashMap,
     io,
     net::{IpAddr, Ipv4Addr, SocketAddr},
-    path::PathBuf,
     pin::Pin,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -39,7 +37,6 @@ use tokio::{
 use tokio_util::io::ReaderStream;
 
 pub const PREFERRED_PORTS: [u16; 3] = [80, 8080, 8081];
-pub const PREFERRED_TLS_PORTS: [u16; 2] = [443, 8443];
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(500);
 const CLIENT_TTL: Duration = Duration::from_secs(45);
 const WEB_PAGE: &str = include_str!("../web/index.html");
@@ -56,10 +53,9 @@ pub struct ServerStatus {
     pub port: Option<u16>,
     /// `http://<ip>[:port]`
     pub url: Option<String>,
-    pub https_port: Option<u16>,
-    /// Full share name, e.g. `abdu.pool`.
+    /// Full share name, e.g. `abdu.link`.
     pub name: Option<String>,
-    /// Preferred-scheme link for the name, e.g. `https://abdu.pool`.
+    /// Link for the name, e.g. `http://abdu.link`.
     pub name_url: Option<String>,
     /// `None` until verified against the hotspot DNS.
     pub name_resolves: Option<bool>,
@@ -67,12 +63,11 @@ pub struct ServerStatus {
     pub hostname_url: Option<String>,
 }
 
-fn url_for(scheme: &str, host: &str, port: u16) -> String {
-    let default = if scheme == "https" { 443 } else { 80 };
-    if port == default {
-        format!("{scheme}://{host}")
+fn url_for(host: &str, port: u16) -> String {
+    if port == 80 {
+        format!("http://{host}")
     } else {
-        format!("{scheme}://{host}:{port}")
+        format!("http://{host}:{port}")
     }
 }
 
@@ -364,9 +359,7 @@ impl<R> Drop for CountingReader<R> {
 
 struct Running {
     addr: SocketAddr,
-    https_addr: Option<SocketAddr>,
     shutdown: Option<oneshot::Sender<()>>,
-    https_handle: Option<axum_server::Handle>,
     telemetry_task: tauri::async_runtime::JoinHandle<()>,
 }
 
@@ -376,18 +369,16 @@ pub struct ServerEngine {
     running: Mutex<Option<Running>>,
     settings: Mutex<Settings>,
     name_state: Mutex<NameState>,
-    config_dir: PathBuf,
 }
 
 impl ServerEngine {
-    pub fn new(pool: Arc<PoolState>, config_dir: PathBuf, settings: Settings) -> Self {
+    pub fn new(pool: Arc<PoolState>, settings: Settings) -> Self {
         ServerEngine {
             pool,
             telemetry: Arc::new(Telemetry::default()),
             running: Mutex::new(None),
             settings: Mutex::new(settings),
             name_state: Mutex::new(NameState::default()),
-            config_dir,
         }
     }
 
@@ -415,30 +406,21 @@ impl ServerEngine {
         let ns = self.name_state.lock().expect("name lock").clone();
         let name = settings.full_name();
         match self.running.lock().expect("server lock").as_ref() {
-            Some(r) => {
-                let https_port = r.https_addr.map(|a| a.port());
-                let name_url = match (settings.prefer_https, https_port) {
-                    (true, Some(p)) => url_for("https", &name, p),
-                    _ => url_for("http", &name, r.addr.port()),
-                };
-                ServerStatus {
-                    running: true,
-                    ip: Some(r.addr.ip().to_string()),
-                    port: Some(r.addr.port()),
-                    url: Some(url_for("http", &r.addr.ip().to_string(), r.addr.port())),
-                    https_port,
-                    name: Some(name),
-                    name_url: Some(name_url),
-                    name_resolves: ns.resolves,
-                    hostname_url: ns.hostname_url,
-                }
-            }
+            Some(r) => ServerStatus {
+                running: true,
+                ip: Some(r.addr.ip().to_string()),
+                port: Some(r.addr.port()),
+                url: Some(url_for(&r.addr.ip().to_string(), r.addr.port())),
+                name_url: Some(url_for(&name, r.addr.port())),
+                name: Some(name),
+                name_resolves: ns.resolves,
+                hostname_url: ns.hostname_url,
+            },
             None => ServerStatus {
                 running: false,
                 ip: None,
                 port: None,
                 url: None,
-                https_port: None,
                 name: Some(name),
                 name_url: None,
                 name_resolves: None,
@@ -467,7 +449,7 @@ impl ServerEngine {
         let name = self.settings().full_name();
         let resolves = names::resolve_via(IpAddr::V4(ip), &name).await == Some(ip);
         let hostname_url = match names::hostname() {
-            Some(h) if names::resolve_via(IpAddr::V4(ip), &h).await == Some(ip) => Some(url_for("http", &h, port)),
+            Some(h) if names::resolve_via(IpAddr::V4(ip), &h).await == Some(ip) => Some(url_for(&h, port)),
             _ => None,
         };
         {
@@ -539,9 +521,8 @@ impl ServerEngine {
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
         let router = Self::router(app.clone(), self.pool.clone(), self.telemetry.clone());
         let app_for_server = app.clone();
-        let http_router = router.clone();
         tauri::async_runtime::spawn(async move {
-            let res = axum::serve(listener, http_router.into_make_service_with_connect_info::<SocketAddr>())
+            let res = axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
                 .with_graceful_shutdown(async move {
                     let _ = shutdown_rx.await;
                 })
@@ -550,53 +531,6 @@ impl ServerEngine {
                 emit_log(&app_for_server, "error", "error", format!("HTTP server stopped unexpectedly: {e}"));
             }
         });
-
-        // HTTPS (self-signed) on 443 / 8443, best effort.
-        let settings = self.settings();
-        let mut tls_names = vec![settings.full_name()];
-        if let Some(h) = names::hostname() {
-            tls_names.push(h);
-        }
-        let (https_addr, https_handle) = match Self::bind(IpAddr::V4(ip), &PREFERRED_TLS_PORTS).await {
-            Ok(tls_listener) => {
-                let tls_addr = tls_listener.local_addr().ok();
-                let dir = self.config_dir.clone();
-                let material = tauri::async_runtime::spawn_blocking(move || tls::load_or_create(&dir, &tls_names, ip)).await.map_err(|e| e.to_string())?;
-                match material {
-                    Ok(m) => match axum_server::tls_rustls::RustlsConfig::from_pem(m.cert_pem.into_bytes(), m.key_pem.into_bytes()).await {
-                        Ok(cfg) => match tls_listener.into_std() {
-                            Ok(std_listener) => {
-                                let handle = axum_server::Handle::new();
-                                let h2 = handle.clone();
-                                let app_for_tls = app.clone();
-                                tauri::async_runtime::spawn(async move {
-                                    if let Err(e) = axum_server::from_tcp_rustls(std_listener, cfg).handle(h2).serve(router.into_make_service_with_connect_info::<SocketAddr>()).await {
-                                        emit_log(&app_for_tls, "warn", "server", format!("HTTPS listener stopped: {e}"));
-                                    }
-                                });
-                                (tls_addr, Some(handle))
-                            }
-                            Err(e) => {
-                                emit_log(&app, "warn", "server", format!("HTTPS disabled: {e}"));
-                                (None, None)
-                            }
-                        },
-                        Err(e) => {
-                            emit_log(&app, "warn", "server", format!("HTTPS disabled (certificate): {e}"));
-                            (None, None)
-                        }
-                    },
-                    Err(e) => {
-                        emit_log(&app, "warn", "server", format!("HTTPS disabled (certificate): {e}"));
-                        (None, None)
-                    }
-                }
-            }
-            Err(e) => {
-                emit_log(&app, "warn", "server", format!("HTTPS disabled: {e}"));
-                (None, None)
-            }
-        };
 
         let telemetry = self.telemetry.clone();
         let app_for_stats = app.clone();
@@ -624,12 +558,9 @@ impl ServerEngine {
             }
         });
 
-        *self.running.lock().expect("server lock") = Some(Running { addr, https_addr, shutdown: Some(shutdown_tx), https_handle, telemetry_task });
+        *self.running.lock().expect("server lock") = Some(Running { addr, shutdown: Some(shutdown_tx), telemetry_task });
         let status = self.status();
         emit_log(&app, "success", "server", format!("Sharing at {}", status.url.clone().unwrap_or_default()));
-        if let Some(p) = status.https_port {
-            emit_log(&app, "info", "server", format!("HTTPS on port {p} (self-signed certificate)"));
-        }
         let _ = app.emit(EV_STATUS, status.clone());
         Ok(status)
     }
@@ -638,9 +569,6 @@ impl ServerEngine {
         if let Some(mut r) = self.running.lock().expect("server lock").take() {
             if let Some(tx) = r.shutdown.take() {
                 let _ = tx.send(());
-            }
-            if let Some(h) = r.https_handle.take() {
-                h.graceful_shutdown(Some(Duration::from_secs(1)));
             }
             r.telemetry_task.abort();
             let _ = app.emit(EV_STATS, StatsEvent { speed_bps: 0.0, peak_bps: 0.0, connected: 0, active_transfers: 0, total_bytes: self.telemetry.total_bytes.load(Ordering::Relaxed) });

@@ -25,11 +25,7 @@ axum = { version = "0.8", default-features = false, features = ["http1", "tokio"
 tokio-util = { version = "0.7", features = ["io"] }
 mime_guess = "2"
 percent-encoding = "2"
-axum-server = { version = "0.7", features = ["tls-rustls-no-provider"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
-rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
 rand = "0.9"
-time = "0.3"
 
 if-addrs = "0.15"
 log = "0.4"

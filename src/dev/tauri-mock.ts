@@ -33,12 +33,12 @@ const ifaces = [
   { name: "Loopback Pseudo-Interface 1", ip: "127.0.0.1", isLoopback: true, isHotspot: false, score: 0 },
 ];
 
-let settings = { name: "abdu", preferHttps: true, autoHotspot: true };
+let settings = { name: "abdu", suffix: "link", autoHotspot: true };
 let nameResolves: boolean | null = null;
 const ftpStatus = () =>
   running
-    ? { running: true, ip: "192.168.137.1", port: 80, url: "http://192.168.137.1", httpsPort: 443, name: `${settings.name}.pool`, nameUrl: `${settings.preferHttps ? "https" : "http"}://${settings.name}.pool`, nameResolves, hostnameUrl: nameResolves ? "http://abd-laptop" : null }
-    : { running: false, ip: null, port: null, url: null, httpsPort: null, name: `${settings.name}.pool`, nameUrl: null, nameResolves: null, hostnameUrl: null };
+    ? { running: true, ip: "192.168.137.1", port: 80, url: "http://192.168.137.1", name: `${settings.name}.${settings.suffix}`, nameUrl: `http://${settings.name}.${settings.suffix}`, nameResolves, hostnameUrl: nameResolves ? "http://abd-laptop" : null }
+    : { running: false, ip: null, port: null, url: null, name: `${settings.name}.${settings.suffix}`, nameUrl: null, nameResolves: null, hostnameUrl: null };
 const log = (level: string, kind: string, message: string, extra: Record<string, unknown> = {}) =>
   emit("server_log", { ts: Date.now(), level, kind, message, client: null, path: null, bytes: null, ...extra });
 
@@ -93,7 +93,7 @@ async function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<
     case "setup_name":
       await new Promise((r) => setTimeout(r, 400));
       nameResolves = true;
-      log("success", "server", `${settings.name}.pool resolves on the hotspot`);
+      log("success", "server", `${settings.name}.${settings.suffix} resolves on the hotspot`);
       return ftpStatus();
     case "check_name":
       return ftpStatus();

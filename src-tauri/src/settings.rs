@@ -3,28 +3,39 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-pub const TLD: &str = "pool";
+/// Default suffix. Must be a real top-level domain: phone browsers only treat
+/// typed text as an address when it ends in one they know, otherwise they
+/// search the web for it.
+pub const DEFAULT_SUFFIX: &str = "link";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
-    /// Short label for the share name: `<name>.pool`.
+    /// Short label for the share name: `<name>.<suffix>`.
     pub name: String,
-    /// Show the HTTPS link as the primary link.
-    pub prefer_https: bool,
+    /// Suffix (a real TLD such as `link`, `site`, `net`).
+    pub suffix: String,
     /// Let the Server switch turn the hotspot on/off (Windows).
     pub auto_hotspot: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { name: "share".into(), prefer_https: true, auto_hotspot: true }
+        Settings { name: "share".into(), suffix: DEFAULT_SUFFIX.into(), auto_hotspot: true }
     }
 }
 
 impl Settings {
     pub fn full_name(&self) -> String {
-        format!("{}.{}", self.name, TLD)
+        format!("{}.{}", self.name, self.suffix)
+    }
+
+    pub fn validate_suffix(suffix: &str) -> Result<String, String> {
+        let s = suffix.trim().trim_start_matches('.').to_ascii_lowercase();
+        if s.len() < 2 || s.len() > 24 || !s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') || s.starts_with('-') || s.ends_with('-') {
+            return Err("The ending must be 2–24 letters, digits or hyphens (e.g. link, site, net).".into());
+        }
+        Ok(s)
     }
 
     /// Lower-case letters, digits and hyphens; 1–32 chars; no leading/trailing hyphen.
@@ -73,10 +84,12 @@ mod tests {
     #[test]
     fn roundtrip() {
         let dir = std::env::temp_dir().join(format!("hpf-settings-{}", std::process::id()));
-        let s = Settings { name: "abdu".into(), prefer_https: false, auto_hotspot: true };
+        let s = Settings { name: "abdu".into(), suffix: "link".into(), auto_hotspot: true };
         s.save(&dir).unwrap();
         assert_eq!(Settings::load(&dir), s);
-        assert_eq!(s.full_name(), "abdu.pool");
+        assert_eq!(s.full_name(), "abdu.link");
+        assert_eq!(Settings::validate_suffix(".Site ").unwrap(), "site");
+        assert!(Settings::validate_suffix("x").is_err());
         let _ = std::fs::remove_dir_all(dir);
     }
 }

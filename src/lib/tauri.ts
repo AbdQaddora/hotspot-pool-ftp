@@ -15,10 +15,9 @@ export interface ServerStatus {
   port: number | null;
   /** http://<ip>[:port] */
   url: string | null;
-  httpsPort: number | null;
-  /** Full share name, e.g. "abdu.pool". */
+  /** Full share name, e.g. "abdu.link". */
   name: string | null;
-  /** Preferred-scheme link for the name, e.g. "https://abdu.pool". */
+  /** Link for the name, e.g. "http://abdu.link". */
   nameUrl: string | null;
   /** null = not checked yet. */
   nameResolves: boolean | null;
@@ -28,9 +27,13 @@ export interface ServerStatus {
 
 export interface Settings {
   name: string;
-  preferHttps: boolean;
+  /** A real top-level domain (link, site, net…) so phone browsers open it instead of searching. */
+  suffix: string;
   autoHotspot: boolean;
 }
+
+/** Suffixes known to be real TLDs (from the public suffix list), offered as quick picks. */
+export const SUFFIX_PICKS = ["link", "site", "net", "zone", "one"];
 
 export interface PoolItem {
   id: string;

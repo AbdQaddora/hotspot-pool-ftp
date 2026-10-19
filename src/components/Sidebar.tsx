@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Sparkline } from "@/components/Sparkline";
 import { formatBytes, formatSpeed } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { DEFAULT_PORT, shareUrl, wifiQr, type HotspotInfo, type ServerStatus, type Settings, type NetInterface, type StatsEvent } from "@/lib/tauri";
+import { DEFAULT_PORT, SUFFIX_PICKS, shareUrl, wifiQr, type HotspotInfo, type ServerStatus, type Settings, type NetInterface, type StatsEvent } from "@/lib/tauri";
 
 interface Props {
   status: ServerStatus;
@@ -118,27 +118,45 @@ function HotspotCredentials({ hotspot, onConfigure, disabled }: { hotspot: Hotsp
 
 function ShareNameCard({ status, settings, onSave, onSetup, onCheck, nameBusy, busy }: { status: ServerStatus; settings: Settings; onSave: Props["onSaveSettings"]; onSetup: () => void; onCheck: () => void; nameBusy: boolean; busy: boolean }) {
   const [label, setLabel] = useState(settings.name);
+  const [suffix, setSuffix] = useState(settings.suffix);
   useEffect(() => setLabel(settings.name), [settings.name]);
-  const dirty = label.trim().toLowerCase() !== settings.name;
-  const link = status.nameUrl ?? `${settings.preferHttps ? "https" : "http"}://${label.trim().toLowerCase() || "name"}.pool`;
+  useEffect(() => setSuffix(settings.suffix), [settings.suffix]);
+  const cleanLabel = label.trim().toLowerCase();
+  const cleanSuffix = suffix.trim().toLowerCase().replace(/^\./, "");
+  const dirty = cleanLabel !== settings.name || cleanSuffix !== settings.suffix;
+  const link = !dirty && status.nameUrl ? status.nameUrl : `http://${cleanLabel || "name"}.${cleanSuffix || "link"}`;
+  const knownSuffix = SUFFIX_PICKS.includes(cleanSuffix);
   const state = !status.running ? "idle" : nameBusy ? "checking" : status.nameResolves === true ? "ok" : status.nameResolves === false ? "bad" : "unknown";
   return (
     <div className="space-y-2">
       <form
-        className="flex items-center gap-1"
+        className="space-y-1.5"
         onSubmit={async (e) => {
           e.preventDefault();
-          if (await onSave({ ...settings, name: label.trim().toLowerCase() })) setLabel(label.trim().toLowerCase());
+          await onSave({ ...settings, name: cleanLabel, suffix: cleanSuffix });
         }}
       >
-        <div className="flex h-7 min-w-0 flex-1 items-center rounded-md border border-border bg-background pr-2 focus-within:ring-1 focus-within:ring-ring">
-          <span className="shrink-0 pl-2 font-mono text-[11px] text-muted-foreground">{settings.preferHttps ? "https://" : "http://"}</span>
-          <input size={1} className="w-full min-w-0 flex-1 bg-transparent px-0.5 font-mono text-[12px] outline-none" value={label} onChange={(e) => setLabel(e.target.value)} maxLength={32} spellCheck={false} aria-label="Share name" />
-          <span className="shrink-0 font-mono text-[11px] text-muted-foreground">.pool</span>
+        <div className="flex items-center gap-1">
+          <div className="flex h-7 min-w-0 flex-1 items-center rounded-md border border-border bg-background pr-1 focus-within:ring-1 focus-within:ring-ring">
+            <span className="shrink-0 pl-2 font-mono text-[11px] text-muted-foreground">http://</span>
+            <input size={1} className="w-full min-w-0 flex-1 bg-transparent px-0.5 font-mono text-[12px] outline-none" value={label} onChange={(e) => setLabel(e.target.value)} maxLength={32} spellCheck={false} aria-label="Share name" />
+            <span className="shrink-0 font-mono text-[11px] text-muted-foreground">.</span>
+            <input size={1} className="w-12 min-w-0 bg-transparent px-0.5 font-mono text-[12px] outline-none" value={suffix} onChange={(e) => setSuffix(e.target.value)} maxLength={24} spellCheck={false} aria-label="Ending" list="suffix-picks" />
+            <datalist id="suffix-picks">
+              {SUFFIX_PICKS.map((s) => (
+                <option key={s} value={s} />
+              ))}
+            </datalist>
+          </div>
+          <Button type="submit" size="sm" className="shrink-0" variant={dirty ? "default" : "outline"} disabled={!dirty || busy}>
+            Save
+          </Button>
         </div>
-        <Button type="submit" size="sm" className="shrink-0" variant={dirty ? "default" : "outline"} disabled={!dirty || busy}>
-          Save
-        </Button>
+        {!knownSuffix && cleanSuffix && (
+          <p className="text-[11px] leading-snug text-warn">
+            Phones only open typed names that end in a real domain. Use one of {SUFFIX_PICKS.map((s) => `.${s}`).join(", ")}, or add a slash when typing (<span className="font-mono">{cleanLabel || "name"}.{cleanSuffix}/</span>).
+          </p>
+        )}
       </form>
       <div className={cn("flex items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 font-mono text-[12.5px]", state === "ok" ? "border-live/40 glow-live text-live" : "border-border text-foreground")}>
         <span className="truncate" title={link}>{link}</span>
@@ -152,7 +170,7 @@ function ShareNameCard({ status, settings, onSave, onSetup, onCheck, nameBusy, b
           </Button>
         </span>
       </div>
-      {state === "ok" && <p className="text-[11px] leading-snug text-muted-foreground">Phones on the hotspot can open this name. {settings.preferHttps && "The first visit shows a certificate warning: tap Advanced → Proceed (or Show details → Visit on iPhone)."}</p>}
+      {state === "ok" && <p className="text-[11px] leading-snug text-muted-foreground">Phones on the hotspot can type <span className="font-mono text-foreground">{status.name}</span> in the browser and it opens directly.</p>}
       {state === "bad" && (
         <div className="space-y-1.5">
           <p className="text-[11px] leading-snug text-warn">The hotspot DNS does not answer this name yet. Phones can use the IP link{status.hostnameUrl ? ` or ${status.hostnameUrl}` : ""}.</p>
@@ -167,10 +185,6 @@ function ShareNameCard({ status, settings, onSave, onSetup, onCheck, nameBusy, b
         </div>
       )}
       {state === "idle" && <p className="text-[11px] leading-snug text-muted-foreground">Start sharing to activate the name. Windows asks for permission once to add it to the hosts file.</p>}
-      <label className="flex cursor-pointer items-center gap-2 text-[11.5px] text-muted-foreground">
-        <input type="checkbox" className="accent-[var(--live)]" checked={settings.preferHttps} onChange={(e) => onSave({ ...settings, preferHttps: e.target.checked })} disabled={busy} />
-        Use https:// for the link (self-signed, shows a one-time warning)
-      </label>
     </div>
   );
 }
