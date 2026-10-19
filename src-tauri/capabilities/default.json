@@ -5,6 +5,18 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "opener:default"
+    "core:window:allow-minimize",
+    "core:window:allow-maximize",
+    "core:window:allow-unmaximize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-is-maximized",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:webview:allow-internal-toggle-devtools",
+    "opener:default",
+    "opener:allow-reveal-item-in-dir",
+    "dialog:default",
+    "dialog:allow-open",
+    "clipboard-manager:allow-write-text"
   ]
 }
