@@ -1,6 +1,7 @@
 mod elevate;
 mod hotspot;
 mod http;
+mod ics;
 mod names;
 mod network;
 mod pool;
