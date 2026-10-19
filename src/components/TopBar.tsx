@@ -34,7 +34,7 @@ export function TopBar({ status, busy, onToggle }: Props) {
             Hotspot Pool FTP
           </span>
           <span data-tauri-drag-region className="font-mono text-[10.5px] text-muted-foreground">
-            v0.1.0
+            v{__APP_VERSION__}
           </span>
         </div>
       </div>
