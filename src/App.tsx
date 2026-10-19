@@ -1,51 +1,46 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { useCallback } from "react";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { TopBar } from "@/components/TopBar";
+import { Sidebar } from "@/components/Sidebar";
+import { PoolManager } from "@/components/PoolManager";
+import { StatusBar } from "@/components/StatusBar";
+import { useServer } from "@/hooks/useServer";
+import { usePool } from "@/hooks/usePool";
+import { useDragDrop } from "@/hooks/useDragDrop";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
-
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+export default function App() {
+  const server = useServer();
+  const pool = usePool();
+  const onDrop = useCallback((paths: string[]) => pool.addPaths(paths), [pool.addPaths]);
+  const dragging = useDragDrop(onDrop);
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
+    <TooltipProvider delayDuration={300}>
+      <div className="flex h-full flex-col overflow-hidden rounded-[10px] border border-border bg-background">
+        <TopBar status={server.status} busy={server.busy} onToggle={server.toggle} />
+        <div className="flex min-h-0 flex-1">
+          <Sidebar
+            status={server.status}
+            stats={server.stats}
+            history={server.history}
+            interfaces={server.interfaces}
+            selectedIp={server.selectedIp}
+            onSelectIp={server.setSelectedIp}
+            onRefresh={server.refreshInterfaces}
+          />
+          <PoolManager
+            items={pool.items}
+            status={server.status}
+            dragging={dragging}
+            error={pool.error}
+            onAddFiles={pool.addFiles}
+            onAddFolders={pool.addFolders}
+            onRemove={pool.remove}
+            onDismissError={pool.dismissError}
+          />
+        </div>
+        <StatusBar status={server.status} totalSize={pool.totalSize} pending={pool.pending} itemCount={pool.items.length} logs={server.logs} />
       </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+    </TooltipProvider>
   );
 }
-
-export default App;
