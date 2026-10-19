@@ -1,4 +1,4 @@
-# Hotspot Pool FTP
+# Hotspot Pool
 
 Share any files or folders on your laptop with phones connected to your **Wi-Fi Mobile Hotspot**, through an embedded HTTP server and a mobile-friendly web page. No router, no cloud, no app on the phone: scan the QR code and download.
 
@@ -6,7 +6,7 @@ Built with **Tauri v2 + Rust** (backend) and **React + Tailwind CSS v4 + shadcn-
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────┐
-│ ● Hotspot Pool FTP                      ● SHARING  [toggle]      – ▢ ✕   │
+│ ● Hotspot Pool                          ● SHARING  [toggle]      – ▢ ✕   │
 ├──────────┬────────────────────────────────────────────────────────────────┤
 │ Share    │  Sharing is on                              [ Stop sharing ]   │
 │ Pool   5 │  Phones on ABD-Laptop can type abdu.link                      │
@@ -28,7 +28,9 @@ Built with **Tauri v2 + Rust** (backend) and **React + Tailwind CSS v4 + shadcn-
 3. On the phone, scan QR **1** with the camera to join the hotspot Wi-Fi, then QR **2** to open the page, or just type the share name, e.g. `abdu.link`. No IP addresses.
 4. Flip the switch off and the app stops sharing and turns the hotspot off again (if it was the one that turned it on). Untick *Manage the hotspot with the Server switch* to leave the hotspot alone.
 
-The hotspot name and password are shown in the sidebar and can be edited there.
+The pool is saved to `pool.json` in the app's config folder and restored on the next launch (items whose files disappeared are dropped with a note in the log).
+
+The hotspot name and password are shown in Settings and can be edited there.
 
 **Share name (`<name>.<ending>`).** Pick the label and ending in the sidebar (default `share.link`). The ending must be a **real top-level domain** (`link`, `site`, `net`, …): phone browsers only open typed text as an address when it ends in one they know, otherwise they search the web for it. On a Windows hotspot the ICS DNS proxy resolves through the laptop's own resolver, so the app adds `192.168.137.1 <name>.<ending>` to the Windows hosts file (one UAC prompt, only when the name changes) and verifies with a real DNS query to the gateway before showing the name as the main link. The server is plain HTTP on port 80 (8080/8081 fallback); there is deliberately no HTTPS, since a self-signed certificate would make every phone show a warning.
 
@@ -41,6 +43,7 @@ The phone sees one unified listing regardless of which drive each item lives on.
 * Dark, touch-first list: folders first, type-coloured icons, size and age per file.
 * Breadcrumb navigation, in-folder search, sort by name / size / newest.
 * Tap a file to download it; tap the eye to preview media; folders open in place.
+* **Download manager:** each file shows a progress bar with speed and time left; a **Downloads** tab lists everything with pause / resume (HTTP ranges), cancel, "Pause all" and "Clear finished". Downloads run inside the page (plain `http://` pages cannot use service workers), chunks are stored in IndexedDB on the phone, and a finished file is handed to the browser with one tap on **Save**.
 * Auto-refreshes every 15 s and whenever the tab becomes visible.
 
 HTTP API used by the page: `GET /api/list?path=/Videos/sub` (JSON) and `GET /dl/<path>` (download, `?inline=1` for preview, supports `Range`).

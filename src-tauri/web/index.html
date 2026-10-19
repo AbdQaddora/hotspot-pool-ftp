@@ -8,14 +8,14 @@
 <style>
   :root{
     --bg:#09090b;--card:#111114;--card2:#16161a;--border:#27272a;--fg:#fafafa;--muted:#a1a1aa;--dim:#71717a;
-    --live:#10b981;--live-dim:rgba(16,185,129,.14);--warn:#f59e0b;--blue:#60a5fa;--pink:#f472b6;--violet:#a78bfa;--orange:#fb923c;
-    --radius:14px;--safe-b:env(safe-area-inset-bottom,0px);
+    --live:#10b981;--live-dim:rgba(16,185,129,.14);--warn:#f59e0b;--red:#ef4444;--blue:#60a5fa;--pink:#f472b6;--violet:#a78bfa;--orange:#fb923c;
+    --radius:14px;--safe-b:env(safe-area-inset-bottom,0px);--tabbar:58px;
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
   body{min-height:100dvh;display:flex;flex-direction:column}
   a{color:inherit;text-decoration:none}
-  button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+  button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}
   .top{position:sticky;top:0;z-index:5;background:rgba(9,9,11,.86);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--border)}
   .bar{display:flex;align-items:center;gap:10px;padding:12px 16px 10px}
   .logo{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:var(--live-dim);border:1px solid rgba(16,185,129,.35);box-shadow:0 0 18px rgba(16,185,129,.18);color:var(--live);flex:none}
@@ -35,15 +35,17 @@
   .crumb.cur{color:var(--fg);border-color:#3f3f46}
   .crumb svg{width:14px;height:14px}
   .sep{color:var(--dim)}
-  main{flex:1;padding:8px 12px calc(24px + var(--safe-b))}
+  main{flex:1;padding:8px 12px calc(16px + var(--tabbar) + var(--safe-b))}
+  .page{display:none}.page.on{display:block}
   .meta{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;color:var(--dim);font-size:11px;padding:6px 6px 8px;text-transform:uppercase;letter-spacing:.05em}
   .meta b{color:var(--muted);font-weight:500}
   .sort{display:flex;gap:4px}
   .sort button{padding:4px 8px;border-radius:8px;border:1px solid transparent;color:var(--dim);font-size:11.5px;text-transform:none;letter-spacing:0}
   .sort button.on{border-color:var(--border);background:var(--card);color:var(--fg)}
   .list{display:flex;flex-direction:column;gap:8px}
-  .row{display:flex;align-items:center;gap:12px;padding:12px 12px 12px 14px;border-radius:var(--radius);background:var(--card);border:1px solid var(--border);transition:transform .08s,background .12s;animation:in .25s both;cursor:pointer;user-select:none;-webkit-user-select:none}
+  .row{border-radius:var(--radius);background:var(--card);border:1px solid var(--border);transition:transform .08s,background .12s;animation:in .25s both;cursor:pointer;user-select:none;-webkit-user-select:none}
   .row:active{transform:scale(.985);background:var(--card2)}
+  .rowmain{display:flex;align-items:center;gap:12px;padding:12px 12px 12px 14px}
   @keyframes in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
   .ico{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;flex:none;background:#18181b;border:1px solid var(--border)}
   .ico svg{width:20px;height:20px}
@@ -51,14 +53,23 @@
   .ico.vid{color:var(--pink)}.ico.aud{color:var(--violet)}.ico.img{color:var(--blue)}.ico.arc{color:var(--orange)}.ico.doc{color:var(--muted)}.ico.apk{color:var(--live)}
   .info{flex:1;min-width:0}
   .name{font-weight:560;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:15px}
-  .det{color:var(--dim);font-size:12.5px;margin-top:2px;display:flex;gap:8px}
+  .det{color:var(--dim);font-size:12.5px;margin-top:2px;display:flex;gap:8px;flex-wrap:wrap}
   .det .ext{color:var(--muted);text-transform:uppercase;font-size:11px;letter-spacing:.04em;background:#18181b;border:1px solid var(--border);padding:1px 6px;border-radius:6px}
   .act{display:flex;gap:4px;flex:none}
   .btn{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;color:var(--muted);border:1px solid transparent}
   .btn svg{width:19px;height:19px}
   .btn.dl{background:var(--live-dim);border-color:rgba(16,185,129,.3);color:var(--live)}
+  .btn.ok{color:var(--live)}
+  .btn.danger{color:var(--red)}
   .btn:active{transform:scale(.92)}
+  .btn[disabled]{opacity:.4;pointer-events:none}
   .chev{color:var(--dim)}
+  .prog{padding:0 14px 12px}
+  .track{height:6px;border-radius:999px;background:#1f1f24;overflow:hidden}
+  .fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#059669,var(--live));transition:width .3s}
+  .fill.paused{background:#3f3f46}.fill.done{background:var(--live)}.fill.error{background:var(--red)}
+  .pstat{display:flex;justify-content:space-between;gap:8px;margin-top:6px;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .pstat b{color:var(--fg);font-weight:600}
   .empty{text-align:center;color:var(--dim);padding:64px 24px}
   .empty .big{font-size:40px;margin-bottom:10px}
   .empty b{display:block;color:var(--muted);font-weight:500;margin-bottom:4px}
@@ -66,7 +77,7 @@
   .skel .row{pointer-events:none}
   .skel .name,.skel .det{background:#1c1c21;color:transparent;border-radius:6px;animation:sh 1.1s infinite}
   @keyframes sh{50%{opacity:.5}}
-  .toast{position:fixed;left:50%;bottom:calc(18px + var(--safe-b));transform:translateX(-50%) translateY(20px);opacity:0;background:#18181b;border:1px solid var(--border);color:var(--fg);padding:10px 14px;border-radius:12px;font-size:14px;box-shadow:0 10px 30px rgba(0,0,0,.5);transition:.2s;pointer-events:none;max-width:90vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .toast{position:fixed;left:50%;bottom:calc(14px + var(--tabbar) + var(--safe-b));transform:translateX(-50%) translateY(20px);opacity:0;background:#18181b;border:1px solid var(--border);color:var(--fg);padding:10px 14px;border-radius:12px;font-size:14px;box-shadow:0 10px 30px rgba(0,0,0,.5);transition:.2s;pointer-events:none;max-width:90vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;z-index:30}
   .toast.on{opacity:1;transform:translateX(-50%)}
   .toast .ok{color:var(--live);margin-right:6px}
   .viewer{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.92);display:none;flex-direction:column}
@@ -76,8 +87,24 @@
   .vbody{flex:1;display:grid;place-items:center;padding:0 8px calc(16px + var(--safe-b));min-height:0}
   .vbody img,.vbody video{max-width:100%;max-height:100%;border-radius:10px;background:#000}
   .vbody audio{width:min(92vw,520px)}
-  footer{text-align:center;color:var(--dim);font-size:12px;padding:6px 16px calc(18px + var(--safe-b))}
-  @media (min-width:720px){main{max-width:820px;width:100%;margin:0 auto}.bar,.search,.crumbs{max-width:820px;margin-left:auto;margin-right:auto}.search{margin:0 auto 10px;padding:0 16px}.search svg{left:28px}.search .clr{right:22px}}
+  footer{text-align:center;color:var(--dim);font-size:12px;padding:6px 16px 10px}
+  .tabbar{position:fixed;left:0;right:0;bottom:0;z-index:10;height:calc(var(--tabbar) + var(--safe-b));padding-bottom:var(--safe-b);background:rgba(9,9,11,.92);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-top:1px solid var(--border);display:grid;grid-template-columns:1fr 1fr}
+  .tab{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:var(--dim);font-size:11.5px;position:relative}
+  .tab svg{width:22px;height:22px}
+  .tab.on{color:var(--live)}
+  .tab .n{position:absolute;top:8px;left:calc(50% + 8px);min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--live);color:#06281c;font-size:11px;font-weight:700;display:none;place-items:center}
+  .tab .n.on{display:grid}
+  .dlhead{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 6px 10px}
+  .dlhead h2{font-size:18px;margin:0;letter-spacing:-.01em}
+  .dlhead .acts{display:flex;gap:6px}
+  .pill{padding:7px 11px;border-radius:999px;border:1px solid var(--border);background:var(--card);color:var(--muted);font-size:12.5px}
+  .pill:active{background:var(--card2)}
+  .dlrow{cursor:default}
+  .dlrow:active{transform:none;background:var(--card)}
+  .state{font-size:11px;text-transform:uppercase;letter-spacing:.05em;padding:2px 7px;border-radius:6px;border:1px solid var(--border);color:var(--muted)}
+  .state.downloading{color:var(--live);border-color:rgba(16,185,129,.3)}.state.done{color:var(--live);border-color:rgba(16,185,129,.3);background:var(--live-dim)}.state.paused{color:var(--warn);border-color:rgba(245,158,11,.3)}.state.error{color:var(--red);border-color:rgba(239,68,68,.3)}.state.queued{color:var(--dim)}
+  .hint{font-size:12px;color:var(--dim);padding:4px 6px 0;line-height:1.45}
+  @media (min-width:720px){main{max-width:820px;width:100%;margin:0 auto}.bar,.search,.crumbs{max-width:820px;margin-left:auto;margin-right:auto}.search{margin:0 auto 10px;padding:0 16px}.search svg{left:28px}.search .clr{right:22px}.tabbar{max-width:820px;margin:0 auto;border-left:1px solid var(--border);border-right:1px solid var(--border)}}
 </style>
 </head>
 <body>
@@ -90,20 +117,33 @@
     </div>
     <button class="btn" id="refresh" aria-label="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg></button>
   </div>
-  <div class="search">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-    <input id="q" type="search" placeholder="Search in this folder" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
-    <button class="clr" id="clr" aria-label="Clear">✕</button>
+  <div id="browsehead">
+    <div class="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="q" type="search" placeholder="Search in this folder" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
+      <button class="clr" id="clr" aria-label="Clear">✕</button>
+    </div>
+    <nav class="crumbs" id="crumbs"></nav>
   </div>
-  <nav class="crumbs" id="crumbs"></nav>
 </header>
 <main>
-  <div class="meta"><span id="count"></span><div class="sort"><button data-s="name" class="on">Name</button><button data-s="size">Size</button><button data-s="date">Newest</button></div></div>
-  <div id="list" class="list"></div>
-  <footer>Files are served from the host laptop over the hotspot. Nothing leaves the network.</footer>
+  <section class="page on" id="page-files">
+    <div class="meta"><span id="count"></span><div class="sort"><button data-s="name" class="on">Name</button><button data-s="size">Size</button><button data-s="date">Newest</button></div></div>
+    <div id="list" class="list"></div>
+    <footer>Files are served from the host laptop over the hotspot. Nothing leaves the network.</footer>
+  </section>
+  <section class="page" id="page-downloads">
+    <div class="dlhead"><h2>Downloads</h2><div class="acts"><button class="pill" id="pauseall">Pause all</button><button class="pill" id="cleardone">Clear finished</button></div></div>
+    <div id="dllist" class="list"></div>
+    <p class="hint">Downloads run inside this page so you can see progress, pause and resume. When one finishes, tap <b>Save</b> to put it in your phone's Downloads. Keep this tab open while downloading.</p>
+  </section>
 </main>
+<nav class="tabbar">
+  <button class="tab on" data-tab="files"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Files</button>
+  <button class="tab" data-tab="downloads"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>Downloads<span class="n" id="dlbadge"></span></button>
+</nav>
 <div class="viewer" id="viewer">
-  <div class="vbar"><button class="btn" id="vclose" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button><div class="name" id="vname"></div><a class="btn dl" id="vdl" download aria-label="Download"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg></a></div>
+  <div class="vbar"><button class="btn" id="vclose" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button><div class="name" id="vname"></div><a class="btn dl" id="vdl" download aria-label="Download with the browser"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg></a></div>
   <div class="vbody" id="vbody"></div>
 </div>
 <div class="toast" id="toast"></div>
@@ -112,7 +152,8 @@
   const $ = (s) => document.querySelector(s);
   const list = $('#list'), crumbs = $('#crumbs'), q = $('#q'), clr = $('#clr'), count = $('#count'), toast = $('#toast');
   const viewer = $('#viewer'), vbody = $('#vbody'), vname = $('#vname'), vdl = $('#vdl');
-  let entries = [], sortBy = 'name', cur = '/';
+  const dllist = $('#dllist'), dlbadge = $('#dlbadge');
+  let entries = [], sortBy = 'name', cur = '/', view = 'files';
 
   const I = {
     dir: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
@@ -126,7 +167,14 @@
     dl: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>',
     eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
     chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>',
-    home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="m3 11 9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>'
+    home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="m3 11 9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>',
+    pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>',
+    play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>',
+    x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>',
+    save: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>',
+    check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5L20 7"/></svg>',
+    retry: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>',
+    trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>'
   };
   const KIND = [
     [/\.(mp4|mkv|mov|avi|webm|m4v|3gp)$/i, 'vid'], [/\.(mp3|flac|wav|aac|ogg|m4a|opus)$/i, 'aud'],
@@ -136,23 +184,142 @@
   const kind = (e) => e.isDir ? 'dir' : (KIND.find(([r]) => r.test(e.name))?.[1] ?? 'file');
   const previewable = (e) => /\.(mp4|webm|m4v|mov|mp3|wav|ogg|m4a|aac|flac|png|jpe?g|gif|webp|svg|bmp|avif|pdf)$/i.test(e.name);
   const fmt = (b) => { if (b < 1024) return b + ' B'; const u = ['KB','MB','GB','TB']; let v = b / 1024, i = 0; while (v >= 1024 && i < 3) { v /= 1024; i++; } return v.toFixed(v < 10 ? 1 : 0) + ' ' + u[i]; };
+  const fmtSpeed = (bps) => bps > 0 ? fmt(bps) + '/s' : '—';
+  const fmtEta = (s) => { if (!isFinite(s) || s < 0) return '—'; if (s < 60) return Math.ceil(s) + ' s'; if (s < 3600) return Math.floor(s / 60) + ' min ' + Math.round(s % 60) + ' s'; return Math.floor(s / 3600) + ' h ' + Math.round((s % 3600) / 60) + ' min'; };
   const ago = (ms) => { if (!ms) return ''; const d = (Date.now() - ms) / 1000; if (d < 3600) return Math.max(1, Math.round(d / 60)) + ' min ago'; if (d < 86400) return Math.round(d / 3600) + ' h ago'; if (d < 86400 * 30) return Math.round(d / 86400) + ' d ago'; return new Date(ms).toLocaleDateString(); };
   const enc = (p) => p.split('/').filter(Boolean).map(encodeURIComponent).join('/');
   const join = (a, b) => (a === '/' ? '' : a) + '/' + b;
   const dlUrl = (p) => '/dl/' + enc(p);
-  const esc = (s) => s.replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   function say(msg, ok) { toast.innerHTML = (ok ? '<span class="ok">✓</span>' : '') + esc(msg); toast.classList.add('on'); clearTimeout(say.t); say.t = setTimeout(() => toast.classList.remove('on'), 2200); }
 
+  /* ------------------------------------------------------------------ downloads engine */
+  const CHUNK = 4 * 1024 * 1024, PARALLEL = 2;
+  const jobs = new Map();          // id -> job (in memory, mirrored in IDB)
+  const ctrls = new Map();         // id -> AbortController
+  let db = null;
+  function openDb() {
+    return new Promise((res, rej) => {
+      const r = indexedDB.open('hotspot-pool-downloads', 1);
+      r.onupgradeneeded = () => { const d = r.result; d.createObjectStore('jobs', { keyPath: 'id' }); d.createObjectStore('chunks', { keyPath: ['id', 'i'] }); };
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    });
+  }
+  const tx = (store, mode, fn) => new Promise((res, rej) => { const t = db.transaction(store, mode); const s = t.objectStore(store); const out = fn(s); t.oncomplete = () => res(out && out.result !== undefined ? out.result : out); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); });
+  const putJob = (j) => db ? tx('jobs', 'readwrite', (s) => s.put(pub(j))) : Promise.resolve();
+  const delJob = (id) => db ? tx('jobs', 'readwrite', (s) => s.delete(id)) : Promise.resolve();
+  const putChunk = (id, i, blob) => tx('chunks', 'readwrite', (s) => s.put({ id, i, blob }));
+  async function delChunks(id) { if (!db) return; await tx('chunks', 'readwrite', (s) => { const r = s.openCursor(IDBKeyRange.bound([id, 0], [id, Infinity])); r.onsuccess = () => { const c = r.result; if (c) { c.delete(); c.continue(); } }; }); }
+  async function readChunks(id) { const out = []; await tx('chunks', 'readonly', (s) => { const r = s.openCursor(IDBKeyRange.bound([id, 0], [id, Infinity])); r.onsuccess = () => { const c = r.result; if (c) { out.push(c.value.blob); c.continue(); } }; }); return out; }
+  const pub = (j) => ({ id: j.id, path: j.path, name: j.name, size: j.size, mime: j.mime, received: j.received, nchunks: j.nchunks, state: j.state, created: j.created, error: j.error, saved: j.saved });
+
+  async function initDownloads() {
+    try { db = await openDb(); } catch (e) { console.warn('IndexedDB unavailable', e); return; }
+    const all = await tx('jobs', 'readonly', (s) => s.getAll());
+    for (const j of all || []) {
+      if (j.state === 'downloading' || j.state === 'queued') j.state = 'paused';
+      j.speed = 0; j.eta = Infinity; j.samples = [];
+      jobs.set(j.id, j);
+    }
+    renderDownloads();
+  }
+  function jobFor(path) { for (const j of jobs.values()) if (j.path === path) return j; return null; }
+  function start(path, name, size) {
+    const existing = jobFor(path);
+    if (existing) { if (existing.state === 'paused' || existing.state === 'error') resume(existing.id); else go('downloads'); return; }
+    const j = { id: 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), path, name, size, mime: '', received: 0, nchunks: 0, state: 'queued', created: Date.now(), error: null, saved: false, speed: 0, eta: Infinity, samples: [] };
+    jobs.set(j.id, j); putJob(j); say('Added to downloads', true); pump(); renderAll();
+  }
+  function pump() {
+    const active = [...jobs.values()].filter((j) => j.state === 'downloading').length;
+    let slots = PARALLEL - active;
+    for (const j of [...jobs.values()].sort((a, b) => a.created - b.created)) { if (slots <= 0) break; if (j.state === 'queued') { slots--; run(j); } }
+  }
+  async function run(j) {
+    const ctrl = new AbortController(); ctrls.set(j.id, ctrl);
+    j.state = 'downloading'; j.error = null; j.samples = []; renderAll();
+    let buffered = 0;   // bytes read but not yet written to IndexedDB
+    try {
+      const headers = j.received > 0 ? { Range: `bytes=${j.received}-` } : {};
+      const res = await fetch(dlUrl(j.path), { headers, signal: ctrl.signal, cache: 'no-store' });
+      if (j.received > 0 && res.status !== 206) { await delChunks(j.id); j.received = 0; j.nchunks = 0; }
+      if (!res.ok && res.status !== 206) throw new Error(res.status === 404 ? 'File is no longer shared' : 'Server error ' + res.status);
+      j.mime = res.headers.get('content-type') || j.mime || 'application/octet-stream';
+      const total = res.status === 206 ? j.received + Number(res.headers.get('content-length') || 0) : Number(res.headers.get('content-length') || j.size);
+      if (total) j.size = total;
+      const reader = res.body.getReader();
+      let parts = [], lastPersist = Date.now();
+      const flush = async () => { if (!buffered) return; await putChunk(j.id, j.nchunks, new Blob(parts, { type: j.mime })); j.nchunks++; parts = []; buffered = 0; };
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        parts.push(value); buffered += value.byteLength; j.received += value.byteLength;
+        const now = Date.now(); j.samples.push([now, j.received]); while (j.samples.length && now - j.samples[0][0] > 3000) j.samples.shift();
+        if (j.samples.length > 1) { const [t0, b0] = j.samples[0]; j.speed = (j.received - b0) / ((now - t0) / 1000); j.eta = j.speed > 0 ? (j.size - j.received) / j.speed : Infinity; }
+        if (buffered >= CHUNK) await flush();
+        if (now - lastPersist > 1000) { lastPersist = now; putJob(j); renderProgress(j); }
+      }
+      await flush();
+      j.state = 'done'; j.speed = 0; j.eta = 0; await putJob(j); renderAll(); say(j.name + ' finished · tap Save', true);
+    } catch (e) {
+      // Un-flushed bytes are gone; resume must re-request them.
+      j.received = Math.max(0, j.received - buffered); buffered = 0;
+      if (ctrl.signal.aborted) { j.state = ctrl.reason === 'cancel' ? 'cancelled' : 'paused'; }
+      else { j.state = 'error'; j.error = e.message || 'Download failed'; }
+      j.speed = 0; j.eta = Infinity;
+      if (j.state !== 'cancelled') await putJob(j);
+      renderAll();
+    } finally { ctrls.delete(j.id); pump(); }
+  }
+  function pause(id) { const j = jobs.get(id); if (!j) return; if (j.state === 'queued') { j.state = 'paused'; putJob(j); renderAll(); return; } const c = ctrls.get(id); if (c) { c.reason = 'pause'; c.abort(); } }
+  function resume(id) { const j = jobs.get(id); if (!j) return; j.state = 'queued'; j.error = null; putJob(j); pump(); renderAll(); }
+  async function cancel(id) { const j = jobs.get(id); if (!j) return; const c = ctrls.get(id); if (c) { c.reason = 'cancel'; c.abort(); } jobs.delete(id); await delJob(id); await delChunks(id); renderAll(); }
+  async function save(id) {
+    const j = jobs.get(id); if (!j || j.state !== 'done') return;
+    say('Preparing ' + j.name + '…');
+    const blobs = await readChunks(id);
+    const blob = new Blob(blobs, { type: j.mime || 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = j.name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 120000);
+    j.saved = true; putJob(j); renderAll();
+  }
+  function pauseAll() { for (const j of jobs.values()) if (j.state === 'downloading' || j.state === 'queued') pause(j.id); }
+  async function clearDone() { for (const j of [...jobs.values()]) if (j.state === 'done' || j.state === 'error' || j.state === 'cancelled') await cancel(j.id); }
+  const activeCount = () => [...jobs.values()].filter((j) => j.state === 'downloading' || j.state === 'queued' || j.state === 'paused' || (j.state === 'done' && !j.saved)).length;
+
+  /* ------------------------------------------------------------------ rendering */
+  function progressHtml(j) {
+    const pct = j.size ? Math.min(100, (j.received / j.size) * 100) : 0;
+    const cls = j.state === 'paused' ? 'paused' : j.state === 'done' ? 'done' : j.state === 'error' ? 'error' : '';
+    let right;
+    if (j.state === 'downloading') right = `<b>${fmtSpeed(j.speed)}</b> · ${fmtEta(j.eta)} left`;
+    else if (j.state === 'queued') right = 'Waiting…';
+    else if (j.state === 'paused') right = 'Paused';
+    else if (j.state === 'done') right = j.saved ? 'Saved' : 'Finished · tap Save';
+    else if (j.state === 'error') right = esc(j.error || 'Failed');
+    else right = '';
+    return `<div class="prog" data-prog="${j.id}"><div class="track"><div class="fill ${cls}" style="width:${pct.toFixed(1)}%"></div></div><div class="pstat"><span>${fmt(j.received)}${j.size ? ' / ' + fmt(j.size) : ''} · <b>${pct.toFixed(0)}%</b></span><span>${right}</span></div></div>`;
+  }
+  function jobActions(j) {
+    if (j.state === 'downloading' || j.state === 'queued') return `<button class="btn" data-pause="${j.id}" aria-label="Pause">${I.pause}</button><button class="btn danger" data-cancel="${j.id}" aria-label="Cancel">${I.x}</button>`;
+    if (j.state === 'paused') return `<button class="btn dl" data-resume="${j.id}" aria-label="Resume">${I.play}</button><button class="btn danger" data-cancel="${j.id}" aria-label="Cancel">${I.x}</button>`;
+    if (j.state === 'error') return `<button class="btn dl" data-resume="${j.id}" aria-label="Retry">${I.retry}</button><button class="btn danger" data-cancel="${j.id}" aria-label="Remove">${I.trash}</button>`;
+    if (j.state === 'done') return `<button class="btn ${j.saved ? 'ok' : 'dl'}" data-save="${j.id}" aria-label="Save">${j.saved ? I.check : I.save}</button><button class="btn" data-cancel="${j.id}" aria-label="Remove">${I.trash}</button>`;
+    return '';
+  }
+  function renderProgress(j) {
+    document.querySelectorAll(`[data-prog="${j.id}"]`).forEach((el) => { el.outerHTML = progressHtml(j); });
+    renderBadge();
+  }
+  function renderBadge() { const n = activeCount(); dlbadge.textContent = n; dlbadge.classList.toggle('on', n > 0); }
   function renderCrumbs() {
     const parts = cur.split('/').filter(Boolean);
     let html = `<a class="crumb${parts.length ? '' : ' cur'}" href="#/">${I.home}Pool</a>`;
     let acc = '';
     parts.forEach((p, i) => { acc += '/' + p; html += `<span class="sep">›</span><a class="crumb${i === parts.length - 1 ? ' cur' : ''}" href="#${enc(acc)}">${esc(p)}</a>`; });
-    crumbs.innerHTML = html;
-    crumbs.scrollLeft = crumbs.scrollWidth;
+    crumbs.innerHTML = html; crumbs.scrollLeft = crumbs.scrollWidth;
   }
-
   function render() {
     const f = q.value.trim().toLowerCase();
     let rows = entries.filter((e) => !f || e.name.toLowerCase().includes(f));
@@ -163,82 +330,96 @@
     list.innerHTML = rows.map((e, i) => {
       const k = kind(e), p = join(cur, e.name), ext = e.isDir ? '' : (e.name.split('.').pop() || '').slice(0, 5);
       const det = e.isDir ? `<span>${e.size ? fmt(e.size) : 'Folder'}</span>` : `<span>${fmt(e.size)}</span>${ext && ext !== e.name ? `<span class="ext">${esc(ext)}</span>` : ''}${e.modified ? `<span>${ago(e.modified)}</span>` : ''}`;
-      const acts = e.isDir ? `<span class="btn chev">${I.chev}</span>` : `${previewable(e) ? `<button class="btn" data-view="${esc(p)}" aria-label="Preview">${I.eye}</button>` : ''}<a class="btn dl" href="${dlUrl(p)}" download="${esc(e.name)}" data-dl="${esc(e.name)}" aria-label="Download">${I.dl}</a>`;
-      const open = e.isDir ? `data-open="${esc(p)}"` : `data-file="${esc(p)}"`;
-      return `<div class="row" role="button" tabindex="0" ${open} style="animation-delay:${Math.min(i, 12) * 18}ms"><div class="ico ${k}">${I[k]}</div><div class="info"><div class="name">${esc(e.name)}</div><div class="det">${det}</div></div><div class="act">${acts}</div></div>`;
+      const j = e.isDir ? null : jobFor(p);
+      const acts = e.isDir ? `<span class="btn chev">${I.chev}</span>` : j ? jobActions(j) : `${previewable(e) ? `<button class="btn" data-view="${esc(p)}" aria-label="Preview">${I.eye}</button>` : ''}<button class="btn dl" data-dl="${esc(p)}" data-name="${esc(e.name)}" data-size="${e.size}" aria-label="Download">${I.dl}</button>`;
+      const open = e.isDir ? `data-open="${esc(p)}"` : `data-file="${esc(p)}" data-name="${esc(e.name)}" data-size="${e.size}"`;
+      return `<div class="row" role="button" tabindex="0" ${open} style="animation-delay:${Math.min(i, 12) * 18}ms"><div class="rowmain"><div class="ico ${k}">${I[k]}</div><div class="info"><div class="name">${esc(e.name)}</div><div class="det">${det}</div></div><div class="act">${acts}</div></div>${j ? progressHtml(j) : ''}</div>`;
     }).join('');
   }
+  function renderDownloads() {
+    const all = [...jobs.values()].sort((a, b) => b.created - a.created);
+    if (!all.length) { dllist.innerHTML = `<div class="empty"><div class="big">⬇️</div><b>No downloads yet</b>Tap the arrow next to a file to start one.</div>`; renderBadge(); return; }
+    dllist.innerHTML = all.map((j) => {
+      const k = kind({ name: j.name, isDir: false });
+      return `<div class="row dlrow"><div class="rowmain"><div class="ico ${k}">${I[k]}</div><div class="info"><div class="name">${esc(j.name)}</div><div class="det"><span class="state ${j.state}">${j.state}</span><span>${esc(j.path.split('/').slice(0, -1).join('/') || '/')}</span></div></div><div class="act">${jobActions(j)}</div></div>${progressHtml(j)}</div>`;
+    }).join('');
+    renderBadge();
+  }
+  function renderAll() { if (view === 'files') render(); renderDownloads(); }
 
   async function load(path, { silent } = {}) {
-    cur = path || '/';
-    renderCrumbs();
-    if (!silent) { list.classList.add('skel'); list.innerHTML = Array(5).fill('<div class="row"><div class="ico"></div><div class="info"><div class="name">loading…</div><div class="det">…</div></div></div>').join(''); }
+    cur = path || '/'; renderCrumbs();
+    if (!silent) { list.classList.add('skel'); list.innerHTML = Array(5).fill('<div class="row"><div class="rowmain"><div class="ico"></div><div class="info"><div class="name">loading…</div><div class="det">…</div></div></div></div>').join(''); }
     try {
       const r = await fetch('/api/list?path=' + encodeURIComponent(cur), { cache: 'no-store' });
       if (!r.ok) throw new Error(r.status === 404 ? 'This folder is no longer shared.' : 'Could not load folder (' + r.status + ')');
-      const data = await r.json();
-      entries = data.entries;
-      list.classList.remove('skel');
-      render();
-    } catch (e) {
-      list.classList.remove('skel');
-      entries = [];
-      list.innerHTML = `<div class="err">${esc(e.message || 'Failed to load')}</div>`;
-      count.textContent = '';
+      const data = await r.json(); entries = data.entries; list.classList.remove('skel'); render();
+    } catch (e) { list.classList.remove('skel'); entries = []; list.innerHTML = `<div class="err">${esc(e.message || 'Failed to load')}</div>`; count.textContent = ''; }
+  }
+  function go(tab) {
+    view = tab;
+    document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('on', t.dataset.tab === tab));
+    $('#page-files').classList.toggle('on', tab === 'files'); $('#page-downloads').classList.toggle('on', tab === 'downloads');
+    $('#browsehead').style.display = tab === 'files' ? '' : 'none';
+    if (tab === 'downloads') { renderDownloads(); if (location.hash !== '#downloads') history.pushState(null, '', '#downloads'); }
+    else if (location.hash === '#downloads') history.pushState(null, '', '#' + enc(cur) + (cur === '/' ? '/' : ''));
+  }
+  function route() {
+    const raw = location.hash.replace(/^#/, '');
+    if (raw === 'downloads') { go('downloads'); return; }
+    const h = decodeURIComponent(raw) || '/';
+    go('files'); q.value = ''; clr.classList.remove('on'); load(h.startsWith('/') ? h : '/' + h);
+  }
+
+  document.addEventListener('click', (ev) => {
+    const t = ev.target;
+    const hit = (sel) => t.closest(sel);
+    let el;
+    if ((el = hit('[data-view]'))) { ev.preventDefault(); ev.stopPropagation(); openViewer(el.dataset.view); return; }
+    if ((el = hit('[data-dl]'))) { ev.stopPropagation(); start(el.dataset.dl, el.dataset.name, Number(el.dataset.size)); return; }
+    if ((el = hit('[data-pause]'))) { ev.stopPropagation(); pause(el.dataset.pause); return; }
+    if ((el = hit('[data-resume]'))) { ev.stopPropagation(); resume(el.dataset.resume); return; }
+    if ((el = hit('[data-cancel]'))) { ev.stopPropagation(); cancel(el.dataset.cancel); return; }
+    if ((el = hit('[data-save]'))) { ev.stopPropagation(); save(el.dataset.save); return; }
+    if ((el = hit('.tab'))) { go(el.dataset.tab); return; }
+    const row = hit('.row');
+    if (row && list.contains(row)) {
+      if (row.dataset.open !== undefined) location.hash = enc(row.dataset.open);
+      else if (row.dataset.file !== undefined) start(row.dataset.file, row.dataset.name, Number(row.dataset.size));
     }
-  }
-
-  function route() { const h = decodeURIComponent(location.hash.replace(/^#/, '')) || '/'; q.value = ''; clr.classList.remove('on'); load(h.startsWith('/') ? h : '/' + h); }
-
-  function triggerDownload(p) {
-    const a = document.createElement('a');
-    a.href = dlUrl(p); a.download = p.split('/').pop();
-    document.body.appendChild(a); a.click(); a.remove();
-    say('Downloading ' + a.download, true);
-  }
-  list.addEventListener('click', (ev) => {
-    const v = ev.target.closest('[data-view]');
-    if (v) { ev.preventDefault(); ev.stopPropagation(); openViewer(v.dataset.view); return; }
-    const d = ev.target.closest('[data-dl]');
-    if (d) { ev.stopPropagation(); say('Downloading ' + d.dataset.dl, true); return; }
-    const row = ev.target.closest('.row');
-    if (!row) return;
-    if (row.dataset.open !== undefined) location.hash = enc(row.dataset.open);
-    else if (row.dataset.file !== undefined) triggerDownload(row.dataset.file);
   });
   list.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Enter' && ev.key !== ' ') return;
-    const row = ev.target.closest('.row');
-    if (!row) return;
-    ev.preventDefault();
+    const row = ev.target.closest('.row'); if (!row) return; ev.preventDefault();
     if (row.dataset.open !== undefined) location.hash = enc(row.dataset.open);
-    else if (row.dataset.file !== undefined) triggerDownload(row.dataset.file);
+    else if (row.dataset.file !== undefined) start(row.dataset.file, row.dataset.name, Number(row.dataset.size));
   });
   function openViewer(p) {
     const name = p.split('/').pop();
-    vname.textContent = name;
-    vdl.href = dlUrl(p); vdl.download = name;
+    vname.textContent = name; vdl.href = dlUrl(p); vdl.download = name;
     const src = dlUrl(p) + '?inline=1';
     let el;
     if (/\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(name)) el = `<img src="${src}" alt="">`;
     else if (/\.(mp3|wav|ogg|m4a|aac|flac)$/i.test(name)) el = `<audio controls autoplay src="${src}"></audio>`;
     else if (/\.pdf$/i.test(name)) { window.open(src, '_blank'); return; }
     else el = `<video controls autoplay playsinline src="${src}"></video>`;
-    vbody.innerHTML = el;
-    viewer.classList.add('on');
-    history.pushState({ viewer: 1 }, '');
+    vbody.innerHTML = el; viewer.classList.add('on'); history.pushState({ viewer: 1 }, '');
   }
   function closeViewer() { if (!viewer.classList.contains('on')) return; viewer.classList.remove('on'); vbody.innerHTML = ''; }
   $('#vclose').onclick = () => history.back();
   window.addEventListener('popstate', () => { if (viewer.classList.contains('on')) closeViewer(); else route(); });
   window.addEventListener('hashchange', route);
+  window.addEventListener('beforeunload', (e) => { if ([...jobs.values()].some((j) => j.state === 'downloading')) { e.preventDefault(); e.returnValue = ''; } });
   q.addEventListener('input', () => { clr.classList.toggle('on', !!q.value); render(); });
   clr.onclick = () => { q.value = ''; clr.classList.remove('on'); render(); q.focus(); };
   document.querySelectorAll('.sort button').forEach((b) => b.onclick = () => { document.querySelectorAll('.sort button').forEach((x) => x.classList.remove('on')); b.classList.add('on'); sortBy = b.dataset.s; render(); });
-  $('#refresh').onclick = () => { load(cur); say('Refreshed', true); };
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) load(cur, { silent: true }); });
-  setInterval(() => { if (!document.hidden && !viewer.classList.contains('on')) load(cur, { silent: true }); }, 15000);
-  route();
+  $('#refresh').onclick = () => { if (view === 'files') { load(cur); say('Refreshed', true); } else renderDownloads(); };
+  $('#pauseall').onclick = pauseAll;
+  $('#cleardone').onclick = clearDone;
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && view === 'files') load(cur, { silent: true }); });
+  setInterval(() => { if (!document.hidden && !viewer.classList.contains('on') && view === 'files') load(cur, { silent: true }); }, 15000);
+  window.__hp = { jobs: () => [...jobs.values()].map(pub), start, pause, resume, cancel, save, go };
+  initDownloads().then(route);
 })();
 </script>
 </body>

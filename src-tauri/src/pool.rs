@@ -1,7 +1,7 @@
 //! In-memory "Shared Pool": arbitrary host files and folders mapped into a
 //! unified virtual FTP tree under `/Pool/<name>`.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -158,6 +158,40 @@ impl PoolState {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct PoolFile {
+    paths: Vec<String>,
+}
+
+impl PoolState {
+    /// Persist the list of host paths (names and sizes are recomputed on load).
+    pub fn save(&self, dir: &Path) -> Result<(), String> {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        let data = PoolFile { paths: self.items().into_iter().map(|i| i.path).collect() };
+        let tmp = dir.join("pool.json.tmp");
+        std::fs::write(&tmp, serde_json::to_vec_pretty(&data).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp, dir.join("pool.json")).map_err(|e| e.to_string())
+    }
+
+    /// Re-add the saved paths that still exist. Returns the items that were
+    /// restored and the paths that are gone.
+    pub fn load(&self, dir: &Path) -> (Vec<PoolItem>, Vec<String>) {
+        let Some(data) = std::fs::read(dir.join("pool.json")).ok().and_then(|b| serde_json::from_slice::<PoolFile>(&b).ok()) else {
+            return (Vec::new(), Vec::new());
+        };
+        let mut restored = Vec::new();
+        let mut missing = Vec::new();
+        for p in data.paths {
+            match self.add(&p) {
+                Ok(item) => restored.push(item),
+                Err(PoolError::NotFound(_)) => missing.push(p),
+                Err(PoolError::Duplicate(_)) => {}
+            }
+        }
+        (restored, missing)
+    }
+}
+
 /// Recursively sum file sizes. Blocking; run on a blocking thread.
 pub fn dir_size(path: &Path) -> u64 {
     let mut total = 0u64;
@@ -196,6 +230,31 @@ mod tests {
         assert!(matches!(pool.add(f.to_str().unwrap()), Err(PoolError::Duplicate(_))));
         assert!(pool.remove(&item.id));
         assert!(pool.lookup("hello.txt").is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn save_and_load_roundtrip_skips_missing() {
+        let dir = std::env::temp_dir().join(format!("hpf-poolsave-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("data")).unwrap();
+        let f = dir.join("data/keep.txt");
+        std::fs::write(&f, b"x").unwrap();
+        let gone = dir.join("data/gone.txt");
+        std::fs::write(&gone, b"y").unwrap();
+
+        let pool = PoolState::default();
+        pool.add(f.to_str().unwrap()).unwrap();
+        pool.add(gone.to_str().unwrap()).unwrap();
+        pool.save(&dir.join("cfg")).unwrap();
+        std::fs::remove_file(&gone).unwrap();
+
+        let fresh = PoolState::default();
+        let (restored, missing) = fresh.load(&dir.join("cfg"));
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].name, "keep.txt");
+        assert_eq!(missing.len(), 1);
+        assert!(missing[0].ends_with("gone.txt"));
         let _ = std::fs::remove_dir_all(dir);
     }
 

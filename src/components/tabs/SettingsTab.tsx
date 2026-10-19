@@ -175,7 +175,7 @@ export function SettingsTab({ status, settings, hotspot, interfaces, selectedIp,
       <Card>
         <CardHeader title="About" icon={<Info />} />
         <CardBody>
-          <Row label={`Hotspot Pool FTP v${__APP_VERSION__}`} description="Share files over your laptop's Wi-Fi hotspot. Nothing leaves the network.">
+          <Row label={`Hotspot Pool v${__APP_VERSION__}`} description="Share files with phones over your laptop's Wi-Fi hotspot. Nothing leaves the network.">
             <Button size="sm" variant="ghost" onClick={() => openUrl("https://github.com/AbdQaddora/hotspot-pool-ftp")}>
               <ExternalLink /> GitHub
             </Button>

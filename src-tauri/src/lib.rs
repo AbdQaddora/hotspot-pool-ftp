@@ -50,6 +50,11 @@ fn get_pool(engine: State<'_, Arc<ServerEngine>>) -> Vec<PoolItem> {
 
 fn broadcast_pool(app: &AppHandle, pool: &PoolState) {
     let _ = app.emit(EV_POOL, pool.items());
+    if let Ok(dir) = config_dir(app) {
+        if let Err(e) = pool.save(&dir) {
+            http::emit_log(app, "warn", "server", format!("Could not save the pool list: {e}"));
+        }
+    }
 }
 
 /// Adds one or more host paths. Folder sizes are computed in the background
@@ -246,7 +251,30 @@ pub fn run() {
         .setup(|app| {
             let dir = app.path().app_config_dir().unwrap_or_else(|_| std::env::temp_dir().join("hotspot-pool"));
             let settings = Settings::load(&dir);
-            app.manage(Arc::new(ServerEngine::new(Arc::new(PoolState::default()), settings)));
+            let pool = Arc::new(PoolState::default());
+            // Restore the pool from the previous session; folder sizes are computed in the background.
+            let (restored, missing) = pool.load(&dir);
+            let handle = app.handle().clone();
+            for item in restored.iter().filter(|i| i.is_dir) {
+                let pool = pool.clone();
+                let id = item.id.clone();
+                let path = std::path::PathBuf::from(&item.path);
+                let handle = handle.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    let size = pool::dir_size(&path);
+                    pool.set_size(&id, size);
+                    let _ = handle.emit(EV_POOL, pool.items());
+                });
+            }
+            if !missing.is_empty() {
+                let handle = app.handle().clone();
+                let n = missing.len();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(1500)).await;
+                    http::emit_log(&handle, "warn", "server", format!("{n} pooled item(s) no longer exist and were dropped"));
+                });
+            }
+            app.manage(Arc::new(ServerEngine::new(pool, settings)));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

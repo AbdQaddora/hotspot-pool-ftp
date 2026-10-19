@@ -34,7 +34,7 @@ export function TopBar({ status, busy, phase = "idle", onToggle }: Props) {
         </div>
         <div data-tauri-drag-region className="flex items-baseline gap-2">
           <span data-tauri-drag-region className="text-[13px] font-semibold tracking-tight">
-            Hotspot Pool FTP
+            Hotspot Pool
           </span>
           <span data-tauri-drag-region className="font-mono text-[10.5px] text-muted-foreground">
             v{__APP_VERSION__}
