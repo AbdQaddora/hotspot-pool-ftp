@@ -38,8 +38,19 @@ export function usePool() {
     setItems(await api.removePathFromPool(id));
   }, []);
 
+  const setPassword = useCallback(async (id: string, password: string | null) => {
+    setError(null);
+    try {
+      setItems(await api.setPoolPassword(id, password));
+      return true;
+    } catch (e) {
+      setError(String(e));
+      return false;
+    }
+  }, []);
+
   const totalSize = items.reduce((a, i) => a + i.size, 0);
   const pending = items.some((i) => i.sizePending);
 
-  return { items, totalSize, pending, error, addPaths, addFiles, addFolders, remove, dismissError: () => setError(null) };
+  return { items, totalSize, pending, error, addPaths, addFiles, addFolders, remove, setPassword, dismissError: () => setError(null) };
 }

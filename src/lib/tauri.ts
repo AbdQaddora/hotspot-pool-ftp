@@ -68,6 +68,7 @@ export interface PoolItem {
   size: number;
   sizePending: boolean;
   addedAt: number;
+  protected: boolean;
 }
 
 export type LogLevel = "info" | "success" | "warn" | "error";
@@ -132,6 +133,7 @@ export const api = {
   getPool: () => invoke<PoolItem[]>("get_pool"),
   addPathToPool: (paths: string[]) => invoke<PoolItem[]>("add_path_to_pool", { paths }),
   removePathFromPool: (id: string) => invoke<PoolItem[]>("remove_path_from_pool", { id }),
+  setPoolPassword: (id: string, password: string | null) => invoke<PoolItem[]>("set_pool_password", { id, password }),
 };
 
 export const events = {

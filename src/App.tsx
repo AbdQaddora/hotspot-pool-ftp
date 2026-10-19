@@ -44,7 +44,7 @@ export default function App() {
           <Nav tab={tab} onTab={setTab} status={server.status} stats={server.stats} poolCount={pool.items.length} inboxCount={uploads.items.length} />
           <div className="relative min-w-0 flex-1 overflow-hidden">
             {tab === "pool" ? (
-              <PoolManager items={pool.items} status={server.status} dragging={dragging} error={error} onAddFiles={pool.addFiles} onAddFolders={pool.addFolders} onRemove={pool.remove} onDismissError={dismiss} />
+              <PoolManager items={pool.items} status={server.status} dragging={dragging} error={error} onAddFiles={pool.addFiles} onAddFolders={pool.addFolders} onRemove={pool.remove} onSetPassword={pool.setPassword} onDismissError={dismiss} />
             ) : (
               <div className="h-full overflow-y-auto p-6">
                 {error && (

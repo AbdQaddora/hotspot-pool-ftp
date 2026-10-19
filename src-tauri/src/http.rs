@@ -48,6 +48,8 @@ pub const EV_LOG: &str = "server_log";
 pub const EV_STATS: &str = "server_stats";
 pub const EV_STATUS: &str = "server_status";
 pub const EV_UPLOADS: &str = "uploads_changed";
+const UNLOCK_COOKIE: &str = "hp_unlock";
+const UNLOCK_TTL: Duration = Duration::from_secs(24 * 3600);
 const MAX_CONCURRENT_UPLOADS: u64 = 3;
 const PIN_MAX_ATTEMPTS: u32 = 5;
 const PIN_WINDOW: Duration = Duration::from_secs(60);
@@ -137,6 +139,8 @@ pub struct Telemetry {
     pub active_uploads: AtomicU64,
     clients: Mutex<HashMap<IpAddr, Instant>>,
     pin_attempts: Mutex<HashMap<IpAddr, (u32, Instant)>>,
+    /// unlock token -> (unlocked top-level item names, issued at)
+    unlocks: Mutex<HashMap<String, (std::collections::HashSet<String>, Instant)>>,
 }
 
 impl Telemetry {
@@ -181,6 +185,25 @@ impl Telemetry {
     fn pin_ok(&self, ip: IpAddr) {
         self.pin_attempts.lock().expect("pin lock").remove(&ip);
     }
+    /// Record an unlock; returns the (possibly new) token to set as a cookie.
+    fn grant_unlock(&self, token: Option<String>, item: &str) -> String {
+        let mut m = self.unlocks.lock().expect("unlock lock");
+        let now = Instant::now();
+        m.retain(|_, (_, t)| now.duration_since(*t) < UNLOCK_TTL);
+        if m.len() > 5000 {
+            m.clear();
+        }
+        let token = token.filter(|t| m.contains_key(t)).unwrap_or_else(|| format!("{:032x}{:032x}", rand::random::<u128>(), rand::random::<u128>()));
+        let e = m.entry(token.clone()).or_insert_with(|| (std::collections::HashSet::new(), now));
+        e.0.insert(item.to_string());
+        e.1 = now;
+        token
+    }
+    fn is_unlocked(&self, token: Option<&str>, item: &str) -> bool {
+        let Some(t) = token else { return false };
+        let m = self.unlocks.lock().expect("unlock lock");
+        m.get(t).map(|(set, at)| at.elapsed() < UNLOCK_TTL && set.contains(item)).unwrap_or(false)
+    }
 }
 
 struct Ctx<R: Runtime> {
@@ -220,6 +243,54 @@ async fn page<R: Runtime>(State(ctx): State<Ctx<R>>, ConnectInfo(addr): ConnectI
     ([(header::CACHE_CONTROL, "no-cache")], Html(WEB_PAGE))
 }
 
+fn unlock_token(h: &HeaderMap) -> Option<String> {
+    let cookie = h.get(header::COOKIE)?.to_str().ok()?;
+    cookie.split(';').map(str::trim).find_map(|kv| kv.strip_prefix(&format!("{UNLOCK_COOKIE}=")).map(|v| v.to_string()))
+}
+
+/// 401 + `locked` payload when the top-level item needs a password this phone has not entered.
+fn locked_response<R: Runtime>(ctx: &Ctx<R>, headers: &HeaderMap, path: &str) -> Option<Response> {
+    let top = vpath::segments(path).into_iter().next()?;
+    if !ctx.pool.is_protected(&top) || ctx.telemetry.is_unlocked(unlock_token(headers).as_deref(), &top) {
+        return None;
+    }
+    Some((StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "This item needs a password.", "locked": true, "item": top }))).into_response())
+}
+
+#[derive(Deserialize)]
+struct UnlockBody {
+    path: String,
+    password: String,
+}
+
+/// Verify a share password; on success the item is unlocked for this browser via a cookie.
+async fn unlock<R: Runtime>(State(ctx): State<Ctx<R>>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap, Json(body): Json<UnlockBody>) -> Response {
+    ctx.seen(addr);
+    let ip = addr.ip();
+    let Some(top) = vpath::segments(&body.path).into_iter().next() else {
+        return json_err(StatusCode::BAD_REQUEST, "Nothing to unlock.", false);
+    };
+    let Some(hash) = ctx.pool.lock_hash(&top) else {
+        return json_err(StatusCode::BAD_REQUEST, "This item is not protected.", false);
+    };
+    if !ctx.telemetry.pin_allowed(ip) {
+        return json_err(StatusCode::TOO_MANY_REQUESTS, "Too many wrong passwords. Wait a minute and try again.", false);
+    }
+    let hash2 = hash.clone();
+    let pw = body.password.clone();
+    let ok = tauri::async_runtime::spawn_blocking(move || crate::pool::verify_password(&hash2, &pw)).await.unwrap_or(false);
+    if !ok {
+        ctx.telemetry.pin_failed(ip);
+        ctx.log("warn", "unlock", format!("{ip} entered a wrong password for {top}"), Some(ip.to_string()), Some(top), None);
+        return json_err(StatusCode::UNAUTHORIZED, "Wrong password.", false);
+    }
+    ctx.telemetry.pin_ok(ip);
+    let token = ctx.telemetry.grant_unlock(unlock_token(&headers), &top);
+    ctx.log("success", "unlock", format!("{ip} unlocked {top}"), Some(ip.to_string()), Some(top.clone()), None);
+    let cookie = format!("{UNLOCK_COOKIE}={token}; Path=/; Max-Age=86400; SameSite=Lax; HttpOnly");
+    ([(header::SET_COOKIE, cookie)], Json(serde_json::json!({ "unlocked": top }))).into_response()
+}
+
 #[derive(Deserialize)]
 struct ListQuery {
     #[serde(default)]
@@ -233,12 +304,24 @@ struct Listing {
     entries: Vec<Entry>,
 }
 
-async fn list<R: Runtime>(State(ctx): State<Ctx<R>>, ConnectInfo(addr): ConnectInfo<SocketAddr>, Query(q): Query<ListQuery>) -> Response {
+async fn list<R: Runtime>(State(ctx): State<Ctx<R>>, ConnectInfo(addr): ConnectInfo<SocketAddr>, Query(q): Query<ListQuery>, headers: HeaderMap) -> Response {
     ctx.seen(addr);
     let segs = vpath::segments(&q.path);
     let clean = if segs.is_empty() { "/".to_string() } else { format!("/{}", segs.join("/")) };
+    if let Some(r) = locked_response(&ctx, &headers, &q.path) {
+        return r;
+    }
     match vpath::resolve(&ctx.pool, &q.path) {
-        Some(Resolved::Root) => Json(Listing { path: clean, entries: vpath::list_root(&ctx.pool) }).into_response(),
+        Some(Resolved::Root) => {
+            let token = unlock_token(&headers);
+            let mut entries = vpath::list_root(&ctx.pool);
+            for e in &mut entries {
+                if e.locked && ctx.telemetry.is_unlocked(token.as_deref(), &e.name) {
+                    e.locked = false;
+                }
+            }
+            Json(Listing { path: clean, entries }).into_response()
+        }
         Some(Resolved::Host(p)) => match vpath::list_dir(&p).await {
             Ok(entries) => Json(Listing { path: clean, entries }).into_response(),
             Err(e) if e.kind() == io::ErrorKind::NotFound => (StatusCode::NOT_FOUND, "not found").into_response(),
@@ -280,6 +363,9 @@ async fn download<R: Runtime>(
     headers: HeaderMap,
 ) -> Response {
     ctx.seen(addr);
+    if let Some(r) = locked_response(&ctx, &headers, &path) {
+        return r;
+    }
     let host = match vpath::resolve(&ctx.pool, &path) {
         Some(Resolved::Host(p)) => p,
         _ => return (StatusCode::NOT_FOUND, "not found").into_response(),
@@ -666,6 +752,7 @@ impl ServerEngine {
             .route("/api/list", get(list::<R>))
             .route("/api/upload-info", get(upload_info::<R>))
             .route("/api/upload", post(upload::<R>))
+            .route("/api/unlock", post(unlock::<R>))
             .route("/dl/{*path}", get(download::<R>))
             .with_state(Ctx { app, pool, telemetry, uploads, settings })
     }
@@ -883,6 +970,28 @@ mod tests {
         assert_eq!(curl(&["-o", "/dev/null", "-w", "%{http_code}", "-X", "POST", "--data-binary", &bigdata, "-H", "X-File-Name: big.bin", "-H", "X-Upload-Pin: 1234", &format!("{base}/api/upload")]), "413");
         settings.lock().unwrap().allow_uploads = false;
         assert_eq!(post(&["-H", "X-Upload-Pin: 1234"]), "403");
+        // ---- password-protected item: refused until unlocked, cookie unlocks for this client
+        let videos_id = pool.items().into_iter().find(|i| i.name == "Videos").unwrap().id;
+        pool.set_password(&videos_id, Some("open sesame")).unwrap();
+        let root_now = curl(&[&format!("{base}/api/list?path=/")]);
+        assert!(root_now.contains("\"locked\":true"), "{root_now}");
+        assert_eq!(status(&format!("{base}/api/list?path=/Videos")), "401");
+        assert_eq!(status(&format!("{base}/dl/Videos/a.mp4")), "401");
+        assert_eq!(status(&format!("{base}/dl/notes.txt")), "200", "unprotected items still open");
+        let jar = dir.join("jar.txt");
+        let wrong = curl(&["-o", "/dev/null", "-w", "%{http_code}", "-X", "POST", "-H", "Content-Type: application/json", "-d", "{\"path\":\"/Videos\",\"password\":\"nope\"}", &format!("{base}/api/unlock")]);
+        assert_eq!(wrong, "401");
+        let right = curl(&["-c", jar.to_str().unwrap(), "-o", "/dev/null", "-w", "%{http_code}", "-X", "POST", "-H", "Content-Type: application/json", "-d", "{\"path\":\"/Videos/sub\",\"password\":\"open sesame\"}", &format!("{base}/api/unlock")]);
+        assert_eq!(right, "200");
+        assert!(std::fs::read_to_string(&jar).unwrap().contains("hp_unlock"));
+        let with_cookie = curl(&["-b", jar.to_str().unwrap(), "-o", "/dev/null", "-w", "%{http_code}", &format!("{base}/dl/Videos/a.mp4")]);
+        assert_eq!(with_cookie, "200");
+        let listing_ok = curl(&["-b", jar.to_str().unwrap(), &format!("{base}/api/list?path=/")]);
+        assert!(!listing_ok.contains("\"locked\":true"), "unlocked for this client: {listing_ok}");
+        assert_eq!(status(&format!("{base}/dl/Videos/a.mp4")), "401", "other clients stay locked");
+        pool.set_password(&videos_id, None).unwrap();
+        assert_eq!(status(&format!("{base}/dl/Videos/a.mp4")), "200");
+
         let dest = uploads.approve(&listed[0].id, &pool).unwrap();
         assert!(dest.ends_with("evil_name.txt"));
         let shared = curl(&[&format!("{base}/api/list?path=/Uploads")]);

@@ -92,6 +92,16 @@ fn add_path_to_pool(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, paths:
     }
 }
 
+/// Set or clear the password of a pooled item (None/empty clears).
+#[tauri::command]
+fn set_pool_password(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, id: String, password: Option<String>) -> Result<Vec<PoolItem>, String> {
+    let pw = password.as_deref().map(str::trim).filter(|p| !p.is_empty());
+    let item = engine.pool().set_password(&id, pw)?;
+    http::emit_log(&app, "info", "server", if pw.is_some() { format!("Password set on {}", item.name) } else { format!("Password removed from {}", item.name) });
+    broadcast_pool(&app, engine.pool());
+    Ok(engine.pool().items())
+}
+
 #[tauri::command]
 fn remove_path_from_pool(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, id: String) -> Vec<PoolItem> {
     let pool = engine.pool();
@@ -368,6 +378,7 @@ pub fn run() {
             get_pool,
             add_path_to_pool,
             remove_path_from_pool,
+            set_pool_password,
             get_hotspot_info,
             set_hotspot,
             configure_hotspot,

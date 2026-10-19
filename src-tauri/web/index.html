@@ -50,6 +50,7 @@
   .ico{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;flex:none;background:#18181b;border:1px solid var(--border)}
   .ico svg{width:20px;height:20px}
   .ico.dir{background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.3);color:var(--warn)}
+  .ico.locked{background:rgba(16,185,129,.1);border-color:rgba(16,185,129,.35);color:var(--live)}
   .ico.vid{color:var(--pink)}.ico.aud{color:var(--violet)}.ico.img{color:var(--blue)}.ico.arc{color:var(--orange)}.ico.doc{color:var(--muted)}.ico.apk{color:var(--live)}
   .info{flex:1;min-width:0}
   .name{font-weight:560;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:15px}
@@ -177,6 +178,7 @@
   <button class="tab" data-tab="downloads"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>Downloads<span class="n" id="dlbadge"></span></button>
   <button class="tab" data-tab="upload"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21V9"/><path d="m7 14 5-5 5 5"/><path d="M5 3h14"/></svg>Upload<span class="n" id="upbadge"></span></button>
 </nav>
+<div class="pinbox" id="pwbox"><div class="sheet"><h3 id="pwtitle">Password required</h3><p id="pwsub">This item is protected. Enter the password set on the laptop.</p><input id="pw" type="password" autocomplete="current-password" placeholder="Password" style="letter-spacing:normal;text-align:left;font-size:16px"><div class="btns"><button id="pwcancel">Cancel</button><button class="go" id="pwgo">Unlock</button></div></div></div>
 <div class="pinbox" id="pinbox"><div class="sheet"><h3>Upload PIN</h3><p>The laptop asks for a PIN before accepting files. Ask its owner.</p><input id="pin" inputmode="numeric" autocomplete="one-time-code" placeholder="••••"><div class="btns"><button id="pincancel">Cancel</button><button class="go" id="pingo">Continue</button></div></div></div>
 <div class="viewer" id="viewer">
   <div class="vbar"><button class="btn" id="vclose" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button><div class="name" id="vname"></div><a class="btn dl" id="vdl" download aria-label="Download with the browser"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg></a></div>
@@ -210,7 +212,8 @@
     save: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>',
     check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5L20 7"/></svg>',
     retry: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>',
-    trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>'
+    trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>',
+    lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>'
   };
   const KIND = [
     [/\.(mp4|mkv|mov|avi|webm|m4v|3gp)$/i, 'vid'], [/\.(mp3|flac|wav|aac|ogg|m4a|opus)$/i, 'aud'],
@@ -236,13 +239,45 @@
   const managedBox = $('#managed');
   managedBox.checked = managed;
   managedBox.addEventListener('change', () => { managed = managedBox.checked; try { localStorage.setItem('hp-managed', managed ? '1' : '0'); } catch {} renderAll(); say(managed ? 'Downloads will be tracked here' : 'Downloads go straight to your phone', true); });
+  /* ------------------------------------------------------------------ password-protected items */
+  const pwbox = $('#pwbox'), pwInput = $('#pw');
+  function askPassword(item, wrong) {
+    return new Promise((res) => {
+      $('#pwtitle').textContent = wrong ? 'Wrong password' : 'Password required';
+      $('#pwsub').textContent = (wrong ? 'Try again. ' : '') + '“' + item + '” is protected. Enter the password set on the laptop.';
+      pwInput.value = ''; pwbox.classList.add('on'); setTimeout(() => pwInput.focus(), 50);
+      const done = (v) => { pwbox.classList.remove('on'); $('#pwgo').onclick = null; $('#pwcancel').onclick = null; res(v); };
+      $('#pwgo').onclick = () => done(pwInput.value);
+      $('#pwcancel').onclick = () => done(null);
+      pwInput.onkeydown = (e) => { if (e.key === 'Enter') done(pwInput.value); };
+    });
+  }
+  /** Ask for the password of the top-level item of `path` until unlocked or cancelled. Resolves true when unlocked. */
+  async function unlock(path) {
+    const item = path.split('/').filter(Boolean)[0]; if (!item) return false;
+    let wrong = false;
+    for (;;) {
+      const pw = await askPassword(item, wrong);
+      if (pw === null) return false;
+      const r = await fetch('/api/unlock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path, password: pw }) });
+      if (r.ok) { say(item + ' unlocked', true); return true; }
+      if (r.status === 429) { say('Too many tries. Wait a minute.'); return false; }
+      wrong = true;
+    }
+  }
+  const isLockedEntry = (e) => !!e.locked;
+
   /** One tap → the browser's own download manager (saves to Downloads automatically). */
   function nativeDownload(p) {
     const a = document.createElement('a'); a.href = dlUrl(p); a.download = p.split('/').pop(); a.rel = 'noopener';
     document.body.appendChild(a); a.click(); a.remove();
     say('Downloading ' + a.download, true);
   }
-  function download(p, name, size) { if (managed) start(p, name, size); else nativeDownload(p); }
+  async function download(p, name, size, locked) {
+    if (locked && !(await unlock(p))) return;
+    if (locked) await load(cur, { silent: true });
+    if (managed) start(p, name, size); else nativeDownload(p);
+  }
   const jobs = new Map();          // id -> job (in memory, mirrored in IDB)
   const ctrls = new Map();         // id -> AbortController
   let db = null;
@@ -465,12 +500,12 @@
     count.innerHTML = `<b>${dirs}</b> folders · <b>${rows.length - dirs}</b> files`;
     if (!rows.length) { list.innerHTML = `<div class="empty"><div class="big">${f ? '🔍' : '📭'}</div><b>${f ? 'No matches' : 'Nothing here yet'}</b>${f ? 'Try another search' : 'Add files on the laptop and refresh'}</div>`; return; }
     list.innerHTML = rows.map((e, i) => {
-      const k = kind(e), p = join(cur, e.name), ext = e.isDir ? '' : (e.name.split('.').pop() || '').slice(0, 5);
-      const det = e.isDir ? `<span>${e.size ? fmt(e.size) : 'Folder'}</span>` : `<span>${fmt(e.size)}</span>${ext && ext !== e.name ? `<span class="ext">${esc(ext)}</span>` : ''}${e.modified ? `<span>${ago(e.modified)}</span>` : ''}`;
+      const k = kind(e), p = join(cur, e.name), ext = e.isDir ? '' : (e.name.split('.').pop() || '').slice(0, 5), locked = isLockedEntry(e);
+      const det = (locked ? '<span style="color:var(--live)">Password protected</span>' : '') + (e.isDir ? `<span>${e.size ? fmt(e.size) : 'Folder'}</span>` : `<span>${fmt(e.size)}</span>${ext && ext !== e.name ? `<span class="ext">${esc(ext)}</span>` : ''}${e.modified ? `<span>${ago(e.modified)}</span>` : ''}`);
       const j = e.isDir ? null : jobFor(p);
-      const acts = e.isDir ? `<span class="btn chev">${I.chev}</span>` : j && managed ? jobActions(j) : `${previewable(e) ? `<button class="btn" data-view="${esc(p)}" aria-label="Preview">${I.eye}</button>` : ''}<button class="btn dl" data-dl="${esc(p)}" data-name="${esc(e.name)}" data-size="${e.size}" aria-label="Download">${I.dl}</button>`;
-      const open = e.isDir ? `data-open="${esc(p)}"` : `data-file="${esc(p)}" data-name="${esc(e.name)}" data-size="${e.size}"`;
-      return `<div class="row" role="button" tabindex="0" ${open} style="animation-delay:${Math.min(i, 12) * 18}ms"><div class="rowmain"><div class="ico ${k}">${I[k]}</div><div class="info"><div class="name">${esc(e.name)}</div><div class="det">${det}</div></div><div class="act">${acts}</div></div>${j && managed ? progressHtml(j) : ''}</div>`;
+      const acts = locked ? `<span class="btn" style="color:var(--live)">${I.lock}</span>` : e.isDir ? `<span class="btn chev">${I.chev}</span>` : j && managed ? jobActions(j) : `${previewable(e) ? `<button class="btn" data-view="${esc(p)}" aria-label="Preview">${I.eye}</button>` : ''}<button class="btn dl" data-dl="${esc(p)}" data-name="${esc(e.name)}" data-size="${e.size}" aria-label="Download">${I.dl}</button>`;
+      const open = (e.isDir ? `data-open="${esc(p)}"` : `data-file="${esc(p)}" data-name="${esc(e.name)}" data-size="${e.size}"`) + (locked ? ' data-locked="1"' : '');
+      return `<div class="row" role="button" tabindex="0" ${open} style="animation-delay:${Math.min(i, 12) * 18}ms"><div class="rowmain"><div class="ico ${locked ? 'locked' : k}">${locked ? I.lock : I[k]}</div><div class="info"><div class="name">${esc(e.name)}</div><div class="det">${det}</div></div><div class="act">${acts}</div></div>${j && managed ? progressHtml(j) : ''}</div>`;
     }).join('');
   }
   function renderDownloads() {
@@ -490,7 +525,11 @@
     cur = path || '/'; renderCrumbs();
     if (!silent) { list.classList.add('skel'); list.innerHTML = Array(5).fill('<div class="row"><div class="rowmain"><div class="ico"></div><div class="info"><div class="name">loading…</div><div class="det">…</div></div></div></div>').join(''); }
     try {
-      const r = await fetch('/api/list?path=' + encodeURIComponent(cur), { cache: 'no-store' });
+      let r = await fetch('/api/list?path=' + encodeURIComponent(cur), { cache: 'no-store' });
+      if (r.status === 401) {
+        list.classList.remove('skel'); entries = []; list.innerHTML = `<div class="empty"><div class="big">🔒</div><b>Password protected</b>Enter the password to open this folder.</div>`; count.textContent = '';
+        if (await unlock(cur)) r = await fetch('/api/list?path=' + encodeURIComponent(cur), { cache: 'no-store' }); else { location.hash = '#/'; return; }
+      }
       if (!r.ok) throw new Error(r.status === 404 ? 'This folder is no longer shared.' : 'Could not load folder (' + r.status + ')');
       const data = await r.json(); entries = data.entries; list.classList.remove('skel'); render();
     } catch (e) { list.classList.remove('skel'); entries = []; list.innerHTML = `<div class="err">${esc(e.message || 'Failed to load')}</div>`; count.textContent = ''; }
@@ -528,15 +567,17 @@
     if ((el = hit('.tab'))) { go(el.dataset.tab); return; }
     const row = hit('.row');
     if (row && list.contains(row)) {
-      if (row.dataset.open !== undefined) location.hash = enc(row.dataset.open);
-      else if (row.dataset.file !== undefined) download(row.dataset.file, row.dataset.name, Number(row.dataset.size));
+      const locked = row.dataset.locked === '1';
+      if (row.dataset.open !== undefined) { if (locked) unlock(row.dataset.open).then((ok) => { if (ok) location.hash = enc(row.dataset.open); }); else location.hash = enc(row.dataset.open); }
+      else if (row.dataset.file !== undefined) download(row.dataset.file, row.dataset.name, Number(row.dataset.size), locked);
     }
   });
   list.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Enter' && ev.key !== ' ') return;
     const row = ev.target.closest('.row'); if (!row) return; ev.preventDefault();
-    if (row.dataset.open !== undefined) location.hash = enc(row.dataset.open);
-    else if (row.dataset.file !== undefined) download(row.dataset.file, row.dataset.name, Number(row.dataset.size));
+    const locked = row.dataset.locked === '1';
+    if (row.dataset.open !== undefined) { if (locked) unlock(row.dataset.open).then((ok) => { if (ok) location.hash = enc(row.dataset.open); }); else location.hash = enc(row.dataset.open); }
+    else if (row.dataset.file !== undefined) download(row.dataset.file, row.dataset.name, Number(row.dataset.size), locked);
   });
   function openViewer(p) {
     const name = p.split('/').pop();
@@ -562,7 +603,7 @@
   $('#cleardone').onclick = clearDone;
   document.addEventListener('visibilitychange', () => { if (!document.hidden && view === 'files') load(cur, { silent: true }); });
   setInterval(() => { if (!document.hidden && !viewer.classList.contains('on') && view === 'files') load(cur, { silent: true }); }, 15000);
-  window.__hp = { jobs: () => [...jobs.values()].map(pub), start, pause, resume, cancel, save, go, queueUploads, download, setManaged: (v) => { managedBox.checked = v; managedBox.dispatchEvent(new Event('change')); }, ups: () => ups.map((u) => ({ id: u.id, name: u.name, size: u.size, sent: u.sent, state: u.state, error: u.error })) };
+  window.__hp = { jobs: () => [...jobs.values()].map(pub), start, pause, resume, cancel, save, go, queueUploads, download, unlock, entries: () => entries, setManaged: (v) => { managedBox.checked = v; managedBox.dispatchEvent(new Event('change')); }, ups: () => ups.map((u) => ({ id: u.id, name: u.name, size: u.size, sent: u.sent, state: u.state, error: u.error })) };
   initDownloads().then(route);
 })();
 </script>

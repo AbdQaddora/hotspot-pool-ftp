@@ -20,11 +20,11 @@ let total = 0;
 let peak = 0;
 let connected = 0;
 const pool = [
-  { id: "p1", name: "Videos", path: "D:\\Media\\Videos", isDir: true, size: 13_300_000_000, sizePending: false, addedAt: Date.now() },
-  { id: "p2", name: "Lecture 04 - Signals.mp4", path: "D:\\Media\\Lectures\\Lecture 04 - Signals.mp4", isDir: false, size: 812_000_000, sizePending: false, addedAt: Date.now() },
-  { id: "p3", name: "Photos 2026", path: "C:\\Users\\abd\\Pictures\\Photos 2026", isDir: true, size: 0, sizePending: true, addedAt: Date.now() },
-  { id: "p4", name: "thesis-draft.pdf", path: "C:\\Users\\abd\\Documents\\thesis-draft.pdf", isDir: false, size: 4_200_000, sizePending: false, addedAt: Date.now() },
-  { id: "p5", name: "backup.zip", path: "E:\\Archive\\backup.zip", isDir: false, size: 2_950_000_000, sizePending: false, addedAt: Date.now() },
+  { id: "p1", name: "Videos", path: "D:\\Media\\Videos", isDir: true, size: 13_300_000_000, sizePending: false, addedAt: Date.now(), protected: true },
+  { id: "p2", name: "Lecture 04 - Signals.mp4", path: "D:\\Media\\Lectures\\Lecture 04 - Signals.mp4", isDir: false, size: 812_000_000, sizePending: false, addedAt: Date.now(), protected: false },
+  { id: "p3", name: "Photos 2026", path: "C:\\Users\\abd\\Pictures\\Photos 2026", isDir: true, size: 0, sizePending: true, addedAt: Date.now(), protected: false },
+  { id: "p4", name: "thesis-draft.pdf", path: "C:\\Users\\abd\\Documents\\thesis-draft.pdf", isDir: false, size: 4_200_000, sizePending: false, addedAt: Date.now(), protected: false },
+  { id: "p5", name: "backup.zip", path: "E:\\Archive\\backup.zip", isDir: false, size: 2_950_000_000, sizePending: false, addedAt: Date.now(), protected: false },
 ];
 
 const ifaces = [
@@ -153,6 +153,11 @@ async function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<
       return pool;
     case "add_path_to_pool":
       return pool;
+    case "set_pool_password": {
+      const it = pool.find((p) => p.id === args.id);
+      if (it) it.protected = !!args.password;
+      return pool;
+    }
     case "remove_path_from_pool": {
       const i = pool.findIndex((p) => p.id === args.id);
       if (i >= 0) pool.splice(i, 1);

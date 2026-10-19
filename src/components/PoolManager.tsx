@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { AlertTriangle, Check, File, FileArchive, FileAudio, FileImage, FileText, FileVideo, Folder, FolderOpen, FolderPlus, FilePlus, Link2, Trash2, UploadCloud, X } from "lucide-react";
+import { AlertTriangle, Check, File, FileArchive, FileAudio, FileImage, FileText, FileVideo, Folder, FolderOpen, FolderPlus, FilePlus, Link2, Lock, LockOpen, Trash2, UploadCloud, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -17,7 +17,47 @@ interface Props {
   onAddFiles: () => void;
   onAddFolders: () => void;
   onRemove: (id: string) => void;
+  onSetPassword: (id: string, password: string | null) => Promise<boolean>;
   onDismissError: () => void;
+}
+
+function PasswordDialog({ item, onClose, onSave }: { item: PoolItem; onClose: () => void; onSave: (pw: string | null) => Promise<boolean> }) {
+  const [pw, setPw] = useState("");
+  const [show, setShow] = useState(false);
+  return (
+    <div className="absolute inset-0 z-30 flex items-center justify-center bg-background/70 backdrop-blur-[2px]" onClick={onClose}>
+      <form
+        className="w-[380px] rounded-xl border border-border bg-card p-5 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+        onSubmit={async (e) => {
+          e.preventDefault();
+          if (await onSave(pw)) onClose();
+        }}
+      >
+        <div className="flex items-center gap-2">
+          <Lock className="size-4 text-live" />
+          <h3 className="text-[14px] font-semibold">{item.protected ? "Change password" : "Protect with a password"}</h3>
+        </div>
+        <p className="mt-1 text-[12px] text-muted-foreground">
+          Phones must enter this password before they can open <span className="font-medium text-foreground">{item.name}</span>{item.isDir ? " or anything inside it" : ""}.
+        </p>
+        <div className="mt-3 flex items-center gap-1 rounded-md border border-border bg-background pr-1 focus-within:ring-1 focus-within:ring-ring">
+          <input autoFocus type={show ? "text" : "password"} className="h-8 min-w-0 flex-1 bg-transparent px-2.5 font-mono text-[13px] outline-none" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="Password" maxLength={64} aria-label="Password" />
+          <Button type="button" variant="ghost" size="xs" onClick={() => setShow((v) => !v)} aria-label="Show">{show ? <LockOpen /> : <Lock />}</Button>
+        </div>
+        <div className="mt-4 flex items-center gap-2">
+          {item.protected && (
+            <Button type="button" variant="destructive" size="sm" onClick={async () => { if (await onSave(null)) onClose(); }}>
+              Remove password
+            </Button>
+          )}
+          <span className="flex-1" />
+          <Button type="button" variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+          <Button type="submit" size="sm" disabled={!pw.trim()}>{item.protected ? "Change" : "Protect"}</Button>
+        </div>
+      </form>
+    </div>
+  );
 }
 
 const EXT_ICON: Array<[RegExp, React.ComponentType<{ className?: string }>]> = [
@@ -46,7 +86,7 @@ function IconBtn({ label, onClick, disabled, children, danger }: { label: string
   );
 }
 
-function Row({ item, status, onRemove }: { item: PoolItem; status: ServerStatus; onRemove: (id: string) => void }) {
+function Row({ item, status, onRemove, onLock }: { item: PoolItem; status: ServerStatus; onRemove: (id: string) => void; onLock: () => void }) {
   const Icon = iconFor(item);
   const link = shareLink(status, item);
   const [copied, setCopied] = useState(false);
@@ -62,8 +102,9 @@ function Row({ item, status, onRemove }: { item: PoolItem; status: ServerStatus;
         <Icon className={cn("size-4", item.isDir ? "text-warn" : "text-muted-foreground")} />
       </td>
       <td className="max-w-0 py-2 pr-3">
-        <div className="truncate text-[12.5px] font-medium text-foreground" title={item.name}>
-          {item.name}
+        <div className="flex items-center gap-1.5 truncate text-[12.5px] font-medium text-foreground" title={item.name}>
+          <span className="truncate">{item.name}</span>
+          {item.protected && <Badge variant="live" className="shrink-0"><Lock className="size-2.5" /> Password</Badge>}
         </div>
         <div className="truncate font-mono text-[10.5px] text-muted-foreground" title={item.path}>
           {item.path}
@@ -72,10 +113,13 @@ function Row({ item, status, onRemove }: { item: PoolItem; status: ServerStatus;
       <td className="w-24 whitespace-nowrap pr-3 text-right font-mono text-[11.5px] tabular-nums text-muted-foreground">
         {item.sizePending ? <span className="animate-pulse">calculating…</span> : formatBytes(item.size)}
       </td>
-      <td className="w-28 pr-2">
+      <td className="w-40 pr-2">
         <div className="flex items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
           <IconBtn label={link ? (item.isDir ? "Copy folder link" : "Copy download link") : "Start server to get a link"} onClick={copy} disabled={!link}>
             {copied ? <Check className="text-live" /> : <Link2 />}
+          </IconBtn>
+          <IconBtn label={item.protected ? "Change or remove password" : "Protect with a password"} onClick={onLock}>
+            {item.protected ? <Lock className="text-live" /> : <LockOpen />}
           </IconBtn>
           <IconBtn label="Open in Explorer / Finder" onClick={() => revealItemInDir(item.path)}>
             <FolderOpen />
@@ -89,9 +133,10 @@ function Row({ item, status, onRemove }: { item: PoolItem; status: ServerStatus;
   );
 }
 
-export function PoolManager({ items, status, dragging, error, onAddFiles, onAddFolders, onRemove, onDismissError }: Props) {
+export function PoolManager({ items, status, dragging, error, onAddFiles, onAddFolders, onRemove, onSetPassword, onDismissError }: Props) {
   const folders = items.filter((i) => i.isDir).length;
   const files = items.length - folders;
+  const [lockItem, setLockItem] = useState<PoolItem | null>(null);
 
   return (
     <main className="relative flex min-w-0 flex-1 flex-col bg-background">
@@ -144,13 +189,14 @@ export function PoolManager({ items, status, dragging, error, onAddFiles, onAddF
             </thead>
             <tbody>
               {items.map((it) => (
-                <Row key={it.id} item={it} status={status} onRemove={onRemove} />
+                <Row key={it.id} item={it} status={status} onRemove={onRemove} onLock={() => setLockItem(it)} />
               ))}
             </tbody>
           </table>
         )}
       </div>
 
+      {lockItem && <PasswordDialog item={lockItem} onClose={() => setLockItem(null)} onSave={(pw) => onSetPassword(lockItem.id, pw)} />}
       <div
         className={cn(
           "pointer-events-none absolute inset-0 z-20 flex items-center justify-center transition-opacity duration-150",

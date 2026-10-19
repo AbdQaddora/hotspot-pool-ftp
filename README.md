@@ -47,6 +47,10 @@ The phone sees one unified listing regardless of which drive each item lives on.
 * **Upload tab:** phones can send files to the laptop with per-file progress. Files land in a quarantine **inbox** on the laptop and are shared only after approval.
 * Auto-refreshes every 15 s and whenever the tab becomes visible.
 
+## Password-protected items
+
+Any pooled file or folder can get a password from the **Pool** page (lock icon on the row). Passwords are stored as Argon2id hashes next to the pool list. On the phone a protected item shows a lock; tapping it asks for the password once, after which that browser holds an unlock cookie (24 h) that covers browsing, previews and downloads of everything inside. The server checks the cookie on every listing and download, so guessing a URL does not bypass it; wrong passwords are rate-limited per IP (5 per minute). Because the page is plain `http://`, the password crosses the hotspot Wi-Fi in clear text once; WPA2 encrypts the air link, so other phones cannot read it, but treat it as a family-level lock, not a vault.
+
 ## Uploads and security
 
 * **Quarantine first.** Uploads are written to `<app data>/inbox/` (changeable in Settings) and never served until the laptop user approves them in the **Inbox** page. Approve moves the file into a shared `Uploads` folder in the pool; Reject deletes it. Executables get a warning badge.

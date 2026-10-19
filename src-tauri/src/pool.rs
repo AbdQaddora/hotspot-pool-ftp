@@ -24,12 +24,28 @@ pub struct PoolItem {
     pub size: u64,
     pub size_pending: bool,
     pub added_at: u64,
+    /// True when a password is required to open this item from a phone.
+    pub protected: bool,
 }
 
 #[derive(Debug, Default)]
 pub struct PoolState {
     items: RwLock<Vec<PoolItem>>,
     next_id: AtomicU64,
+    /// Canonical host path -> Argon2 password hash.
+    locks: RwLock<HashMap<String, String>>,
+}
+
+/// Hash a share password with Argon2id and a random salt.
+pub fn hash_password(password: &str) -> Result<String, String> {
+    use argon2::password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
+    let salt = SaltString::generate(&mut OsRng);
+    argon2::Argon2::default().hash_password(password.as_bytes(), &salt).map(|h| h.to_string()).map_err(|e| e.to_string())
+}
+
+pub fn verify_password(hash: &str, password: &str) -> bool {
+    use argon2::password_hash::{PasswordHash, PasswordVerifier};
+    PasswordHash::new(hash).map(|h| argon2::Argon2::default().verify_password(password.as_bytes(), &h).is_ok()).unwrap_or(false)
 }
 
 #[derive(Debug)]
@@ -135,6 +151,7 @@ impl PoolState {
             .unwrap_or_else(|| canonical_str.replace(['\\', '/', ':'], "_"));
         let name = unique_name(&base, &guard);
         let is_dir = meta.is_dir();
+        let protected = self.locks.read().map(|l| l.contains_key(&canonical_str)).unwrap_or(false);
         let item = PoolItem {
             id: format!("p{}", self.next_id.fetch_add(1, Ordering::Relaxed) + 1),
             name,
@@ -143,6 +160,7 @@ impl PoolState {
             size: if is_dir { 0 } else { meta.len() },
             size_pending: is_dir,
             added_at: now_ms(),
+            protected,
         };
         guard.push(item.clone());
         Ok(item)
@@ -151,8 +169,44 @@ impl PoolState {
     pub fn remove(&self, id: &str) -> bool {
         let mut guard = self.items.write().expect("pool lock poisoned");
         let before = guard.len();
+        if let Some(item) = guard.iter().find(|i| i.id == id) {
+            self.locks.write().expect("locks lock").remove(&item.path);
+        }
         guard.retain(|i| i.id != id);
         guard.len() != before
+    }
+
+    /// Set (Some) or clear (None) the password of an item.
+    pub fn set_password(&self, id: &str, password: Option<&str>) -> Result<PoolItem, String> {
+        let mut guard = self.items.write().expect("pool lock poisoned");
+        let item = guard.iter_mut().find(|i| i.id == id).ok_or("Item not found")?;
+        let mut locks = self.locks.write().expect("locks lock");
+        match password {
+            Some(p) => {
+                let p = p.trim();
+                if p.is_empty() || p.chars().count() > 64 {
+                    return Err("The password must be 1–64 characters.".into());
+                }
+                locks.insert(item.path.clone(), hash_password(p)?);
+                item.protected = true;
+            }
+            None => {
+                locks.remove(&item.path);
+                item.protected = false;
+            }
+        }
+        Ok(item.clone())
+    }
+
+    /// Password hash for the item with this virtual name, if protected.
+    pub fn lock_hash(&self, name: &str) -> Option<String> {
+        let path = self.items.read().ok()?.iter().find(|i| i.name == name)?.path.clone();
+        self.locks.read().ok()?.get(&path).cloned()
+    }
+
+    /// Is the top-level item with this name password protected?
+    pub fn is_protected(&self, name: &str) -> bool {
+        self.lock_hash(name).is_some()
     }
 
     pub fn set_size(&self, id: &str, size: u64) {
@@ -168,13 +222,15 @@ impl PoolState {
 #[derive(Debug, Serialize, Deserialize)]
 struct PoolFile {
     paths: Vec<String>,
+    #[serde(default)]
+    locks: HashMap<String, String>,
 }
 
 impl PoolState {
     /// Persist the list of host paths (names and sizes are recomputed on load).
     pub fn save(&self, dir: &Path) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        let data = PoolFile { paths: self.items().into_iter().map(|i| i.path).collect() };
+        let data = PoolFile { paths: self.items().into_iter().map(|i| i.path).collect(), locks: self.locks.read().map(|l| l.clone()).unwrap_or_default() };
         let tmp = dir.join("pool.json.tmp");
         std::fs::write(&tmp, serde_json::to_vec_pretty(&data).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
         std::fs::rename(&tmp, dir.join("pool.json")).map_err(|e| e.to_string())
@@ -186,6 +242,7 @@ impl PoolState {
         let Some(data) = std::fs::read(dir.join("pool.json")).ok().and_then(|b| serde_json::from_slice::<PoolFile>(&b).ok()) else {
             return (Vec::new(), Vec::new());
         };
+        *self.locks.write().expect("locks lock") = data.locks;
         let mut restored = Vec::new();
         let mut missing = Vec::new();
         for p in data.paths {
@@ -266,6 +323,28 @@ mod tests {
     }
 
     #[test]
+    fn passwords_hash_verify_and_persist() {
+        let dir = std::env::temp_dir().join(format!("hpf-locks-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("Secret")).unwrap();
+        let pool = PoolState::default();
+        let item = pool.add(dir.join("Secret").to_str().unwrap()).unwrap();
+        assert!(!item.protected && !pool.is_protected("Secret"));
+        assert!(pool.set_password(&item.id, Some("   ")).is_err());
+        let locked = pool.set_password(&item.id, Some("hunter2")).unwrap();
+        assert!(locked.protected && pool.is_protected("Secret"));
+        let h = pool.lock_hash("Secret").unwrap();
+        assert!(h.starts_with("$argon2"));
+        assert!(verify_password(&h, "hunter2") && !verify_password(&h, "hunter3"));
+        pool.save(&dir.join("cfg")).unwrap();
+        let fresh = PoolState::default();
+        fresh.load(&dir.join("cfg"));
+        assert!(fresh.items()[0].protected && fresh.is_protected("Secret"), "lock survives restart");
+        assert!(!fresh.set_password(&fresh.items()[0].id, None).unwrap().protected);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn duplicate_names_get_suffixed() {
         let a = PoolItem {
             id: "1".into(),
@@ -275,6 +354,7 @@ mod tests {
             size: 0,
             size_pending: false,
             added_at: 0,
+            protected: false,
         };
         assert_eq!(unique_name("report.pdf", &[a.clone()]), "report (2).pdf");
         assert_eq!(unique_name("Videos", &[a]), "Videos");

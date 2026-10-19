@@ -26,6 +26,9 @@ pub struct Entry {
     pub size: u64,
     /// Unix millis, if known.
     pub modified: Option<u64>,
+    /// Top-level items only: a password is required (not yet unlocked by this phone).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub locked: bool,
 }
 
 pub fn segments(path: &str) -> Vec<String> {
@@ -68,10 +71,11 @@ pub fn list_root(pool: &PoolState) -> Vec<Entry> {
         .entries()
         .into_iter()
         .map(|(name, (host, is_dir, size))| Entry {
-            name,
-            is_dir,
+            locked: pool.is_protected(&name),
             size: if is_dir { size } else { std::fs::metadata(&host).map(|m| m.len()).unwrap_or(size) },
             modified: std::fs::metadata(&host).ok().and_then(|m| millis(m.modified())),
+            name,
+            is_dir,
         })
         .collect();
     sort(&mut out);
@@ -91,7 +95,7 @@ pub async fn list_dir(dir: &Path) -> std::io::Result<Vec<Entry>> {
         if name.starts_with('.') {
             continue;
         }
-        out.push(Entry { name, is_dir: m.is_dir(), size: if m.is_dir() { 0 } else { m.len() }, modified: millis(m.modified()) });
+        out.push(Entry { name, is_dir: m.is_dir(), size: if m.is_dir() { 0 } else { m.len() }, modified: millis(m.modified()), locked: false });
     }
     sort(&mut out);
     Ok(out)
