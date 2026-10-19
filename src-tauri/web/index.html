@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#09090b">
+<title>Hotspot Pool</title>
+<style>
+  :root{
+    --bg:#09090b;--card:#111114;--card2:#16161a;--border:#27272a;--fg:#fafafa;--muted:#a1a1aa;--dim:#71717a;
+    --live:#10b981;--live-dim:rgba(16,185,129,.14);--warn:#f59e0b;--blue:#60a5fa;--pink:#f472b6;--violet:#a78bfa;--orange:#fb923c;
+    --radius:14px;--safe-b:env(safe-area-inset-bottom,0px);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+  body{min-height:100dvh;display:flex;flex-direction:column}
+  a{color:inherit;text-decoration:none}
+  button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+  .top{position:sticky;top:0;z-index:5;background:rgba(9,9,11,.86);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--border)}
+  .bar{display:flex;align-items:center;gap:10px;padding:12px 16px 10px}
+  .logo{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:var(--live-dim);border:1px solid rgba(16,185,129,.35);box-shadow:0 0 18px rgba(16,185,129,.18);color:var(--live);flex:none}
+  .title{font-weight:650;letter-spacing:-.01em;font-size:16px}
+  .sub{color:var(--muted);font-size:12px;margin-top:1px}
+  .pulse{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--live);margin-right:6px;box-shadow:0 0 0 0 rgba(16,185,129,.6);animation:pulse 1.8s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(16,185,129,.55)}70%{box-shadow:0 0 0 8px rgba(16,185,129,0)}100%{box-shadow:0 0 0 0 rgba(16,185,129,0)}}
+  .search{margin:0 16px 10px;position:relative}
+  .search input{width:100%;height:40px;border-radius:12px;border:1px solid var(--border);background:var(--card);color:var(--fg);padding:0 38px 0 38px;font-size:15px;outline:none}
+  .search input:focus{border-color:#3f3f46}
+  .search svg{position:absolute;left:12px;top:11px;width:18px;height:18px;color:var(--dim)}
+  .search .clr{position:absolute;right:6px;top:6px;width:28px;height:28px;border-radius:8px;color:var(--muted);display:none;place-items:center}
+  .search .clr.on{display:grid}
+  .crumbs{display:flex;align-items:center;gap:4px;padding:0 16px 10px;overflow-x:auto;scrollbar-width:none;white-space:nowrap;font-size:13px}
+  .crumbs::-webkit-scrollbar{display:none}
+  .crumb{padding:6px 10px;border-radius:999px;background:var(--card);border:1px solid var(--border);color:var(--muted);flex:none;display:flex;align-items:center;gap:6px}
+  .crumb.cur{color:var(--fg);border-color:#3f3f46}
+  .crumb svg{width:14px;height:14px}
+  .sep{color:var(--dim)}
+  main{flex:1;padding:8px 12px calc(24px + var(--safe-b))}
+  .meta{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;color:var(--dim);font-size:11px;padding:6px 6px 8px;text-transform:uppercase;letter-spacing:.05em}
+  .meta b{color:var(--muted);font-weight:500}
+  .sort{display:flex;gap:4px}
+  .sort button{padding:4px 8px;border-radius:8px;border:1px solid transparent;color:var(--dim);font-size:11.5px;text-transform:none;letter-spacing:0}
+  .sort button.on{border-color:var(--border);background:var(--card);color:var(--fg)}
+  .list{display:flex;flex-direction:column;gap:8px}
+  .row{display:flex;align-items:center;gap:12px;padding:12px 12px 12px 14px;border-radius:var(--radius);background:var(--card);border:1px solid var(--border);transition:transform .08s,background .12s;animation:in .25s both;cursor:pointer;user-select:none;-webkit-user-select:none}
+  .row:active{transform:scale(.985);background:var(--card2)}
+  @keyframes in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  .ico{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;flex:none;background:#18181b;border:1px solid var(--border)}
+  .ico svg{width:20px;height:20px}
+  .ico.dir{background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.3);color:var(--warn)}
+  .ico.vid{color:var(--pink)}.ico.aud{color:var(--violet)}.ico.img{color:var(--blue)}.ico.arc{color:var(--orange)}.ico.doc{color:var(--muted)}.ico.apk{color:var(--live)}
+  .info{flex:1;min-width:0}
+  .name{font-weight:560;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:15px}
+  .det{color:var(--dim);font-size:12.5px;margin-top:2px;display:flex;gap:8px}
+  .det .ext{color:var(--muted);text-transform:uppercase;font-size:11px;letter-spacing:.04em;background:#18181b;border:1px solid var(--border);padding:1px 6px;border-radius:6px}
+  .act{display:flex;gap:4px;flex:none}
+  .btn{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;color:var(--muted);border:1px solid transparent}
+  .btn svg{width:19px;height:19px}
+  .btn.dl{background:var(--live-dim);border-color:rgba(16,185,129,.3);color:var(--live)}
+  .btn:active{transform:scale(.92)}
+  .chev{color:var(--dim)}
+  .empty{text-align:center;color:var(--dim);padding:64px 24px}
+  .empty .big{font-size:40px;margin-bottom:10px}
+  .empty b{display:block;color:var(--muted);font-weight:500;margin-bottom:4px}
+  .err{margin:12px 6px;padding:14px;border-radius:12px;border:1px solid rgba(245,158,11,.35);background:rgba(245,158,11,.08);color:var(--warn);font-size:14px}
+  .skel .row{pointer-events:none}
+  .skel .name,.skel .det{background:#1c1c21;color:transparent;border-radius:6px;animation:sh 1.1s infinite}
+  @keyframes sh{50%{opacity:.5}}
+  .toast{position:fixed;left:50%;bottom:calc(18px + var(--safe-b));transform:translateX(-50%) translateY(20px);opacity:0;background:#18181b;border:1px solid var(--border);color:var(--fg);padding:10px 14px;border-radius:12px;font-size:14px;box-shadow:0 10px 30px rgba(0,0,0,.5);transition:.2s;pointer-events:none;max-width:90vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .toast.on{opacity:1;transform:translateX(-50%)}
+  .toast .ok{color:var(--live);margin-right:6px}
+  .viewer{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.92);display:none;flex-direction:column}
+  .viewer.on{display:flex}
+  .vbar{display:flex;align-items:center;gap:10px;padding:12px 14px;padding-top:calc(12px + env(safe-area-inset-top,0px))}
+  .vbar .name{flex:1}
+  .vbody{flex:1;display:grid;place-items:center;padding:0 8px calc(16px + var(--safe-b));min-height:0}
+  .vbody img,.vbody video{max-width:100%;max-height:100%;border-radius:10px;background:#000}
+  .vbody audio{width:min(92vw,520px)}
+  footer{text-align:center;color:var(--dim);font-size:12px;padding:6px 16px calc(18px + var(--safe-b))}
+  @media (min-width:720px){main{max-width:820px;width:100%;margin:0 auto}.bar,.search,.crumbs{max-width:820px;margin-left:auto;margin-right:auto}.search{margin:0 auto 10px;padding:0 16px}.search svg{left:28px}.search .clr{right:22px}}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="bar">
+    <div class="logo"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5M19.1 4.9c3.9 3.9 3.9 10.2 0 14.1"/><circle cx="12" cy="12" r="2"/></svg></div>
+    <div style="flex:1;min-width:0">
+      <div class="title">Hotspot Pool</div>
+      <div class="sub"><span class="pulse"></span><span id="status">Connected · tap a file to download</span></div>
+    </div>
+    <button class="btn" id="refresh" aria-label="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg></button>
+  </div>
+  <div class="search">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input id="q" type="search" placeholder="Search in this folder" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
+    <button class="clr" id="clr" aria-label="Clear">✕</button>
+  </div>
+  <nav class="crumbs" id="crumbs"></nav>
+</header>
+<main>
+  <div class="meta"><span id="count"></span><div class="sort"><button data-s="name" class="on">Name</button><button data-s="size">Size</button><button data-s="date">Newest</button></div></div>
+  <div id="list" class="list"></div>
+  <footer>Files are served from the host laptop over the hotspot. Nothing leaves the network.</footer>
+</main>
+<div class="viewer" id="viewer">
+  <div class="vbar"><button class="btn" id="vclose" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button><div class="name" id="vname"></div><a class="btn dl" id="vdl" download aria-label="Download"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg></a></div>
+  <div class="vbody" id="vbody"></div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const list = $('#list'), crumbs = $('#crumbs'), q = $('#q'), clr = $('#clr'), count = $('#count'), toast = $('#toast');
+  const viewer = $('#viewer'), vbody = $('#vbody'), vname = $('#vname'), vdl = $('#vdl');
+  let entries = [], sortBy = 'name', cur = '/';
+
+  const I = {
+    dir: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+    vid: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3z"/></svg>',
+    aud: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18V6l10-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/></svg>',
+    img: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-8 8"/></svg>',
+    arc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2"/><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M10 12h4"/></svg>',
+    doc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/></svg>',
+    apk: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg>',
+    file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>',
+    dl: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>',
+    eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
+    chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>',
+    home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="m3 11 9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>'
+  };
+  const KIND = [
+    [/\.(mp4|mkv|mov|avi|webm|m4v|3gp)$/i, 'vid'], [/\.(mp3|flac|wav|aac|ogg|m4a|opus)$/i, 'aud'],
+    [/\.(png|jpe?g|gif|webp|svg|heic|bmp|avif)$/i, 'img'], [/\.(zip|rar|7z|tar|gz|iso)$/i, 'arc'],
+    [/\.(pdf|txt|md|docx?|xlsx?|pptx?|csv|json|epub)$/i, 'doc'], [/\.(apk|exe|msi|dmg|deb)$/i, 'apk']
+  ];
+  const kind = (e) => e.isDir ? 'dir' : (KIND.find(([r]) => r.test(e.name))?.[1] ?? 'file');
+  const previewable = (e) => /\.(mp4|webm|m4v|mov|mp3|wav|ogg|m4a|aac|flac|png|jpe?g|gif|webp|svg|bmp|avif|pdf)$/i.test(e.name);
+  const fmt = (b) => { if (b < 1024) return b + ' B'; const u = ['KB','MB','GB','TB']; let v = b / 1024, i = 0; while (v >= 1024 && i < 3) { v /= 1024; i++; } return v.toFixed(v < 10 ? 1 : 0) + ' ' + u[i]; };
+  const ago = (ms) => { if (!ms) return ''; const d = (Date.now() - ms) / 1000; if (d < 3600) return Math.max(1, Math.round(d / 60)) + ' min ago'; if (d < 86400) return Math.round(d / 3600) + ' h ago'; if (d < 86400 * 30) return Math.round(d / 86400) + ' d ago'; return new Date(ms).toLocaleDateString(); };
+  const enc = (p) => p.split('/').filter(Boolean).map(encodeURIComponent).join('/');
+  const join = (a, b) => (a === '/' ? '' : a) + '/' + b;
+  const dlUrl = (p) => '/dl/' + enc(p);
+  const esc = (s) => s.replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  function say(msg, ok) { toast.innerHTML = (ok ? '<span class="ok">✓</span>' : '') + esc(msg); toast.classList.add('on'); clearTimeout(say.t); say.t = setTimeout(() => toast.classList.remove('on'), 2200); }
+
+  function renderCrumbs() {
+    const parts = cur.split('/').filter(Boolean);
+    let html = `<a class="crumb${parts.length ? '' : ' cur'}" href="#/">${I.home}Pool</a>`;
+    let acc = '';
+    parts.forEach((p, i) => { acc += '/' + p; html += `<span class="sep">›</span><a class="crumb${i === parts.length - 1 ? ' cur' : ''}" href="#${enc(acc)}">${esc(p)}</a>`; });
+    crumbs.innerHTML = html;
+    crumbs.scrollLeft = crumbs.scrollWidth;
+  }
+
+  function render() {
+    const f = q.value.trim().toLowerCase();
+    let rows = entries.filter((e) => !f || e.name.toLowerCase().includes(f));
+    rows.sort((a, b) => (b.isDir - a.isDir) || (sortBy === 'size' ? b.size - a.size : sortBy === 'date' ? (b.modified || 0) - (a.modified || 0) : a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })));
+    const dirs = rows.filter((e) => e.isDir).length;
+    count.innerHTML = `<b>${dirs}</b> folders · <b>${rows.length - dirs}</b> files`;
+    if (!rows.length) { list.innerHTML = `<div class="empty"><div class="big">${f ? '🔍' : '📭'}</div><b>${f ? 'No matches' : 'Nothing here yet'}</b>${f ? 'Try another search' : 'Add files on the laptop and refresh'}</div>`; return; }
+    list.innerHTML = rows.map((e, i) => {
+      const k = kind(e), p = join(cur, e.name), ext = e.isDir ? '' : (e.name.split('.').pop() || '').slice(0, 5);
+      const det = e.isDir ? `<span>${e.size ? fmt(e.size) : 'Folder'}</span>` : `<span>${fmt(e.size)}</span>${ext && ext !== e.name ? `<span class="ext">${esc(ext)}</span>` : ''}${e.modified ? `<span>${ago(e.modified)}</span>` : ''}`;
+      const acts = e.isDir ? `<span class="btn chev">${I.chev}</span>` : `${previewable(e) ? `<button class="btn" data-view="${esc(p)}" aria-label="Preview">${I.eye}</button>` : ''}<a class="btn dl" href="${dlUrl(p)}" download="${esc(e.name)}" data-dl="${esc(e.name)}" aria-label="Download">${I.dl}</a>`;
+      const open = e.isDir ? `data-open="${esc(p)}"` : `data-file="${esc(p)}"`;
+      return `<div class="row" role="button" tabindex="0" ${open} style="animation-delay:${Math.min(i, 12) * 18}ms"><div class="ico ${k}">${I[k]}</div><div class="info"><div class="name">${esc(e.name)}</div><div class="det">${det}</div></div><div class="act">${acts}</div></div>`;
+    }).join('');
+  }
+
+  async function load(path, { silent } = {}) {
+    cur = path || '/';
+    renderCrumbs();
+    if (!silent) { list.classList.add('skel'); list.innerHTML = Array(5).fill('<div class="row"><div class="ico"></div><div class="info"><div class="name">loading…</div><div class="det">…</div></div></div>').join(''); }
+    try {
+      const r = await fetch('/api/list?path=' + encodeURIComponent(cur), { cache: 'no-store' });
+      if (!r.ok) throw new Error(r.status === 404 ? 'This folder is no longer shared.' : 'Could not load folder (' + r.status + ')');
+      const data = await r.json();
+      entries = data.entries;
+      list.classList.remove('skel');
+      render();
+    } catch (e) {
+      list.classList.remove('skel');
+      entries = [];
+      list.innerHTML = `<div class="err">${esc(e.message || 'Failed to load')}</div>`;
+      count.textContent = '';
+    }
+  }
+
+  function route() { const h = decodeURIComponent(location.hash.replace(/^#/, '')) || '/'; q.value = ''; clr.classList.remove('on'); load(h.startsWith('/') ? h : '/' + h); }
+
+  function triggerDownload(p) {
+    const a = document.createElement('a');
+    a.href = dlUrl(p); a.download = p.split('/').pop();
+    document.body.appendChild(a); a.click(); a.remove();
+    say('Downloading ' + a.download, true);
+  }
+  list.addEventListener('click', (ev) => {
+    const v = ev.target.closest('[data-view]');
+    if (v) { ev.preventDefault(); ev.stopPropagation(); openViewer(v.dataset.view); return; }
+    const d = ev.target.closest('[data-dl]');
+    if (d) { ev.stopPropagation(); say('Downloading ' + d.dataset.dl, true); return; }
+    const row = ev.target.closest('.row');
+    if (!row) return;
+    if (row.dataset.open !== undefined) location.hash = enc(row.dataset.open);
+    else if (row.dataset.file !== undefined) triggerDownload(row.dataset.file);
+  });
+  list.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+    const row = ev.target.closest('.row');
+    if (!row) return;
+    ev.preventDefault();
+    if (row.dataset.open !== undefined) location.hash = enc(row.dataset.open);
+    else if (row.dataset.file !== undefined) triggerDownload(row.dataset.file);
+  });
+  function openViewer(p) {
+    const name = p.split('/').pop();
+    vname.textContent = name;
+    vdl.href = dlUrl(p); vdl.download = name;
+    const src = dlUrl(p) + '?inline=1';
+    let el;
+    if (/\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(name)) el = `<img src="${src}" alt="">`;
+    else if (/\.(mp3|wav|ogg|m4a|aac|flac)$/i.test(name)) el = `<audio controls autoplay src="${src}"></audio>`;
+    else if (/\.pdf$/i.test(name)) { window.open(src, '_blank'); return; }
+    else el = `<video controls autoplay playsinline src="${src}"></video>`;
+    vbody.innerHTML = el;
+    viewer.classList.add('on');
+    history.pushState({ viewer: 1 }, '');
+  }
+  function closeViewer() { if (!viewer.classList.contains('on')) return; viewer.classList.remove('on'); vbody.innerHTML = ''; }
+  $('#vclose').onclick = () => history.back();
+  window.addEventListener('popstate', () => { if (viewer.classList.contains('on')) closeViewer(); else route(); });
+  window.addEventListener('hashchange', route);
+  q.addEventListener('input', () => { clr.classList.toggle('on', !!q.value); render(); });
+  clr.onclick = () => { q.value = ''; clr.classList.remove('on'); render(); q.focus(); };
+  document.querySelectorAll('.sort button').forEach((b) => b.onclick = () => { document.querySelectorAll('.sort button').forEach((x) => x.classList.remove('on')); b.classList.add('on'); sortBy = b.dataset.s; render(); });
+  $('#refresh').onclick = () => { load(cur); say('Refreshed', true); };
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) load(cur, { silent: true }); });
+  setInterval(() => { if (!document.hidden && !viewer.classList.contains('on')) load(cur, { silent: true }); }, 15000);
+  route();
+})();
+</script>
+</body>
+</html>

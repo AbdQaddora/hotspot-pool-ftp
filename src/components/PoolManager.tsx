@@ -6,12 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatBytes } from "@/lib/format";
-import { ftpLink, type FtpStatus, type PoolItem } from "@/lib/tauri";
+import { shareLink, type ServerStatus, type PoolItem } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 
 interface Props {
   items: PoolItem[];
-  status: FtpStatus;
+  status: ServerStatus;
   dragging: boolean;
   error: string | null;
   onAddFiles: () => void;
@@ -46,9 +46,9 @@ function IconBtn({ label, onClick, disabled, children, danger }: { label: string
   );
 }
 
-function Row({ item, status, onRemove }: { item: PoolItem; status: FtpStatus; onRemove: (id: string) => void }) {
+function Row({ item, status, onRemove }: { item: PoolItem; status: ServerStatus; onRemove: (id: string) => void }) {
   const Icon = iconFor(item);
-  const link = ftpLink(status, item);
+  const link = shareLink(status, item);
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     if (!link) return;
@@ -74,7 +74,7 @@ function Row({ item, status, onRemove }: { item: PoolItem; status: FtpStatus; on
       </td>
       <td className="w-28 pr-2">
         <div className="flex items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-          <IconBtn label={link ? "Copy FTP link" : "Start server to get a link"} onClick={copy} disabled={!link}>
+          <IconBtn label={link ? (item.isDir ? "Copy folder link" : "Copy download link") : "Start server to get a link"} onClick={copy} disabled={!link}>
             {copied ? <Check className="text-live" /> : <Link2 />}
           </IconBtn>
           <IconBtn label="Open in Explorer / Finder" onClick={() => revealItemInDir(item.path)}>
@@ -128,7 +128,7 @@ export function PoolManager({ items, status, dragging, error, onAddFiles, onAddF
             <div>
               <p className="text-[13px] font-medium">Your pool is empty</p>
               <p className="mt-1 max-w-xs text-[12px] text-muted-foreground">
-                Drop files or folders anywhere in this window, or use the buttons above. Everything you add appears under <code className="font-mono text-foreground">/Pool</code> on the phone.
+                Drop files or folders anywhere in this window, or use the buttons above. Everything you add shows up on the phone\u2019s web page the moment the server is on.
               </p>
             </div>
           </div>

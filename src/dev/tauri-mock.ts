@@ -31,9 +31,9 @@ const ifaces = [
   { name: "Loopback Pseudo-Interface 1", ip: "127.0.0.1", isLoopback: true, isHotspot: false, score: 0 },
 ];
 
-const ftpStatus = () => (running ? { running: true, ip: "192.168.137.1", port: 2121, url: "ftp://192.168.137.1:2121/Pool" } : { running: false, ip: null, port: null, url: null });
+const ftpStatus = () => (running ? { running: true, ip: "192.168.137.1", port: 8080, url: "http://192.168.137.1:8080" } : { running: false, ip: null, port: null, url: null });
 const log = (level: string, kind: string, message: string, extra: Record<string, unknown> = {}) =>
-  emit("ftp_log", { ts: Date.now(), level, kind, message, client: null, path: null, bytes: null, ...extra });
+  emit("server_log", { ts: Date.now(), level, kind, message, client: null, path: null, bytes: null, ...extra });
 
 let ticker: number | undefined;
 function startSim() {
@@ -41,9 +41,9 @@ function startSim() {
   connected = 2;
   total = 0;
   peak = 0;
-  log("success", "server", "FTP server listening on ftp://192.168.137.1:2121/Pool");
-  setTimeout(() => log("success", "connect", "Client connected (1 online)", { client: "a81f3c9e" }), 300);
-  setTimeout(() => log("success", "connect", "Client connected (2 online)", { client: "7bc02d11" }), 900);
+  log("success", "server", "Sharing at http://192.168.137.1:8080");
+  setTimeout(() => log("success", "connect", "Device 192.168.137.23 connected (1 online)", { client: "192.168.137.23" }), 300);
+  setTimeout(() => log("success", "connect", "Device 192.168.137.41 connected (2 online)", { client: "192.168.137.41" }), 900);
   let t = 0;
   ticker = window.setInterval(() => {
     t += 0.5;
@@ -51,16 +51,16 @@ function startSim() {
     const speed = base * 1024 * 1024;
     total += speed / 2;
     peak = Math.max(peak, speed);
-    emit("ftp_stats", { speedBps: speed, peakBps: peak, connected, activeTransfers: 1, totalBytes: total });
-    if (Math.round(t * 2) % 14 === 0) log("success", "download", "Downloaded /Pool/Videos/S01E03.mkv (1.4 GB)", { client: "a81f3c9e", path: "/Pool/Videos/S01E03.mkv", bytes: 1_400_000_000 });
+    emit("server_stats", { speedBps: speed, peakBps: peak, connected, activeTransfers: 1, totalBytes: total });
+    if (Math.round(t * 2) % 14 === 0) log("success", "download", "192.168.137.23 downloaded S01E03.mkv (1.4 GB)", { client: "192.168.137.23", path: "/Videos/S01E03.mkv", bytes: 1_400_000_000 });
   }, 500);
 }
 function stopSim() {
   running = false;
   connected = 0;
   if (ticker) window.clearInterval(ticker);
-  emit("ftp_stats", { speedBps: 0, peakBps: 0, connected: 0, activeTransfers: 0, totalBytes: total });
-  log("info", "server", "FTP server stopped");
+  emit("server_stats", { speedBps: 0, peakBps: 0, connected: 0, activeTransfers: 0, totalBytes: total });
+  log("info", "server", "Server stopped");
 }
 
 async function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<unknown> {
@@ -78,15 +78,15 @@ async function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<
       return ifaces;
     case "get_hotspot_interface":
       return ifaces[0];
-    case "get_ftp_status":
+    case "get_server_status":
       return ftpStatus();
-    case "start_ftp":
+    case "start_server":
       startSim();
-      emit("ftp_status", ftpStatus());
+      emit("server_status", ftpStatus());
       return ftpStatus();
-    case "stop_ftp":
+    case "stop_server":
       stopSim();
-      emit("ftp_status", ftpStatus());
+      emit("server_status", ftpStatus());
       return ftpStatus();
     case "get_pool":
       return pool;
@@ -101,6 +101,7 @@ async function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<
       return false;
     case "plugin:clipboard-manager|write_text":
     case "plugin:opener|reveal_item_in_dir":
+    case "plugin:opener|open_url":
     case "plugin:window|minimize":
     case "plugin:window|toggle_maximize":
     case "plugin:window|close":
@@ -129,6 +130,6 @@ async function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<
 
 // Auto-start the server after load when ?autostart is present (used for screenshots).
 if (new URLSearchParams(location.search).has("autostart")) {
-  setTimeout(() => invoke("start_ftp"), 400);
+  setTimeout(() => invoke("start_server"), 400);
 }
 export {};

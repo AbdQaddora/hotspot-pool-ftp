@@ -9,7 +9,7 @@ export interface NetInterface {
   score: number;
 }
 
-export interface FtpStatus {
+export interface ServerStatus {
   running: boolean;
   ip: string | null;
   port: number | null;
@@ -50,24 +50,32 @@ export interface StatsEvent {
 export const api = {
   getNetworkInterfaces: () => invoke<NetInterface[]>("get_network_interfaces"),
   getHotspotInterface: () => invoke<NetInterface | null>("get_hotspot_interface"),
-  startFtp: (ip?: string, port?: number) => invoke<FtpStatus>("start_ftp", { ip: ip ?? null, port: port ?? null }),
-  stopFtp: () => invoke<FtpStatus>("stop_ftp"),
-  getFtpStatus: () => invoke<FtpStatus>("get_ftp_status"),
+  startServer: (ip?: string, port?: number) => invoke<ServerStatus>("start_server", { ip: ip ?? null, port: port ?? null }),
+  stopServer: () => invoke<ServerStatus>("stop_server"),
+  getServerStatus: () => invoke<ServerStatus>("get_server_status"),
   getPool: () => invoke<PoolItem[]>("get_pool"),
   addPathToPool: (paths: string[]) => invoke<PoolItem[]>("add_path_to_pool", { paths }),
   removePathFromPool: (id: string) => invoke<PoolItem[]>("remove_path_from_pool", { id }),
 };
 
 export const events = {
-  onLog: (cb: (e: LogEvent) => void): Promise<UnlistenFn> => listen<LogEvent>("ftp_log", (ev) => cb(ev.payload)),
-  onStats: (cb: (e: StatsEvent) => void): Promise<UnlistenFn> => listen<StatsEvent>("ftp_stats", (ev) => cb(ev.payload)),
-  onStatus: (cb: (e: FtpStatus) => void): Promise<UnlistenFn> => listen<FtpStatus>("ftp_status", (ev) => cb(ev.payload)),
+  onLog: (cb: (e: LogEvent) => void): Promise<UnlistenFn> => listen<LogEvent>("server_log", (ev) => cb(ev.payload)),
+  onStats: (cb: (e: StatsEvent) => void): Promise<UnlistenFn> => listen<StatsEvent>("server_stats", (ev) => cb(ev.payload)),
+  onStatus: (cb: (e: ServerStatus) => void): Promise<UnlistenFn> => listen<ServerStatus>("server_status", (ev) => cb(ev.payload)),
   onPool: (cb: (e: PoolItem[]) => void): Promise<UnlistenFn> => listen<PoolItem[]>("pool_changed", (ev) => cb(ev.payload)),
 };
 
-/** Virtual FTP link for a pooled item. */
-export function ftpLink(status: FtpStatus, item: PoolItem): string | null {
-  if (!status.ip || !status.port) return null;
-  const name = item.name.split("/").map(encodeURIComponent).join("/");
-  return `ftp://${status.ip}:${status.port}/Pool/${name}${item.isDir ? "/" : ""}`;
+export const DEFAULT_PORT = 8080;
+
+/** Base URL phones open, using the live server or the adapter that would be used. */
+export function shareUrl(status: ServerStatus, fallbackIp: string | null): string | null {
+  if (status.url) return status.url;
+  return fallbackIp ? `http://${fallbackIp}:${DEFAULT_PORT}` : null;
+}
+
+/** Direct link for a pooled item: files download, folders open in the web page. */
+export function shareLink(status: ServerStatus, item: PoolItem): string | null {
+  if (!status.url) return null;
+  const name = encodeURIComponent(item.name);
+  return item.isDir ? `${status.url}/#/${name}` : `${status.url}/dl/${name}`;
 }

@@ -1,16 +1,17 @@
 import { QRCodeSVG } from "qrcode.react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { Check, Copy, Gauge, RefreshCw, Smartphone, Wifi, WifiOff } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { Check, Copy, ExternalLink, Gauge, RefreshCw, Smartphone, Wifi, WifiOff } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Sparkline } from "@/components/Sparkline";
 import { formatBytes, formatSpeed } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { FtpStatus, NetInterface, StatsEvent } from "@/lib/tauri";
+import { DEFAULT_PORT, shareUrl, type ServerStatus, type NetInterface, type StatsEvent } from "@/lib/tauri";
 
 interface Props {
-  status: FtpStatus;
+  status: ServerStatus;
   stats: StatsEvent;
   history: number[];
   interfaces: NetInterface[];
@@ -36,8 +37,8 @@ export function Sidebar({ status, stats, history, interfaces, selectedIp, onSele
   const [copied, setCopied] = useState(false);
   const active = interfaces.find((i) => i.ip === (status.running ? status.ip : selectedIp));
   const displayIp = status.running ? status.ip : selectedIp;
-  const displayPort = status.port ?? 2121;
-  const url = status.url ?? (displayIp ? `ftp://${displayIp}:${displayPort}/Pool` : null);
+  const displayPort = status.port ?? DEFAULT_PORT;
+  const url = shareUrl(status, displayIp);
 
   const copy = async () => {
     if (!url) return;
@@ -98,12 +99,18 @@ export function Sidebar({ status, stats, history, interfaces, selectedIp, onSele
       <Section title="Scan to connect" icon={<Smartphone />}>
         <div className="flex flex-col items-center gap-2.5">
           <div className={cn("rounded-md border border-border bg-background p-2.5 transition-opacity", !status.running && "opacity-40")}>
-            <QRCodeSVG value={url ?? "ftp://0.0.0.0:2121/Pool"} size={124} bgColor="transparent" fgColor="#fafafa" level="M" />
+            <QRCodeSVG value={url ?? "http://0.0.0.0:8080"} size={124} bgColor="transparent" fgColor="#fafafa" level="M" />
           </div>
           <code className="w-full truncate text-center font-mono text-[10.5px] text-muted-foreground" title={url ?? ""}>
             {url ?? "server offline"}
           </code>
-          {!status.running && <p className="text-center text-[11px] text-muted-foreground">Start the server to activate the link.</p>}
+          {status.running ? (
+            <Button variant="outline" size="sm" className="w-full" onClick={() => url && openUrl(url)}>
+              <ExternalLink /> Open in browser
+            </Button>
+          ) : (
+            <p className="text-center text-[11px] text-muted-foreground">Start the server to activate the link.</p>
+          )}
         </div>
       </Section>
 

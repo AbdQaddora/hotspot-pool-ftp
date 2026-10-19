@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, events, type FtpStatus, type LogEvent, type NetInterface, type StatsEvent } from "@/lib/tauri";
+import { api, events, type ServerStatus, type LogEvent, type NetInterface, type StatsEvent } from "@/lib/tauri";
 
 const MAX_LOG = 400;
 const SPARK_POINTS = 60;
@@ -7,7 +7,7 @@ const SPARK_POINTS = 60;
 const idleStats: StatsEvent = { speedBps: 0, peakBps: 0, connected: 0, activeTransfers: 0, totalBytes: 0 };
 
 export function useServer() {
-  const [status, setStatus] = useState<FtpStatus>({ running: false, ip: null, port: null, url: null });
+  const [status, setStatus] = useState<ServerStatus>({ running: false, ip: null, port: null, url: null });
   const [stats, setStats] = useState<StatsEvent>(idleStats);
   const [history, setHistory] = useState<number[]>(() => Array(SPARK_POINTS).fill(0));
   const [logs, setLogs] = useState<LogEvent[]>([]);
@@ -30,7 +30,7 @@ export function useServer() {
     const unsubs: Array<() => void> = [];
     (async () => {
       await refreshInterfaces();
-      const s = await api.getFtpStatus();
+      const s = await api.getServerStatus();
       if (alive) setStatus(s);
       unsubs.push(await events.onStatus((e) => setStatus(e)));
       unsubs.push(
@@ -60,7 +60,7 @@ export function useServer() {
     setBusy(true);
     setError(null);
     try {
-      const s = await api.startFtp(selectedRef.current ?? undefined);
+      const s = await api.startServer(selectedRef.current ?? undefined);
       setStatus(s);
       setHistory(Array(SPARK_POINTS).fill(0));
     } catch (e) {
@@ -74,7 +74,7 @@ export function useServer() {
   const stop = useCallback(async () => {
     setBusy(true);
     try {
-      const s = await api.stopFtp();
+      const s = await api.stopServer();
       setStatus(s);
       setStats(idleStats);
     } finally {

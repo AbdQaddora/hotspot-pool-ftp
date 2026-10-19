@@ -2,10 +2,10 @@ import { useEffect, useRef } from "react";
 import { Database, HardDrive, Network, Terminal } from "lucide-react";
 import { formatBytes, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { FtpStatus, LogEvent } from "@/lib/tauri";
+import { DEFAULT_PORT, type ServerStatus, type LogEvent } from "@/lib/tauri";
 
 interface Props {
-  status: FtpStatus;
+  status: ServerStatus;
   totalSize: number;
   pending: boolean;
   itemCount: number;
@@ -32,8 +32,7 @@ export function StatusBar({ status, totalSize, pending, itemCount, logs }: Props
       <div className="flex h-7 shrink-0 items-center gap-4 border-b border-border px-3 text-[11px] text-muted-foreground">
         <span className="flex items-center gap-1.5">
           <Network className="size-3" />
-          Port <span className={cn("font-mono", status.running ? "text-live" : "text-foreground")}>{status.port ?? 2121}</span>
-          {status.running && <span className="font-mono text-muted-foreground">· PASV 50000–50100</span>}
+          HTTP <span className={cn("font-mono", status.running ? "text-live" : "text-foreground")}>{status.port ?? DEFAULT_PORT}</span>
         </span>
         <span className="flex items-center gap-1.5">
           <Database className="size-3" />

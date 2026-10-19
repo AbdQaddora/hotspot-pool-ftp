@@ -4,10 +4,10 @@ import { Maximize2, Minimize2, Minus, Radio, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import type { FtpStatus } from "@/lib/tauri";
+import type { ServerStatus } from "@/lib/tauri";
 
 interface Props {
-  status: FtpStatus;
+  status: ServerStatus;
   busy: boolean;
   onToggle: () => void;
 }
@@ -51,7 +51,7 @@ export function TopBar({ status, busy, onToggle }: Props) {
             {busy ? "…" : status.running ? "SERVER ON" : "SERVER OFF"}
           </span>
         </div>
-        <Switch checked={status.running} disabled={busy} onCheckedChange={onToggle} aria-label="Toggle FTP server" />
+        <Switch checked={status.running} disabled={busy} onCheckedChange={onToggle} aria-label="Toggle sharing server" />
       </div>
 
       <div className="ml-3 flex items-center gap-0.5">

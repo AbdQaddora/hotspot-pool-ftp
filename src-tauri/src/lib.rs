@@ -1,9 +1,9 @@
-mod ftp;
+mod http;
 mod network;
 mod pool;
-mod vfs;
+mod vpath;
 
-use ftp::{FtpEngine, FtpStatus};
+use http::{ServerEngine, ServerStatus};
 use network::NetInterface;
 use pool::{PoolItem, PoolState};
 use std::sync::Arc;
@@ -22,22 +22,22 @@ fn get_hotspot_interface() -> Option<NetInterface> {
 }
 
 #[tauri::command]
-async fn start_ftp(app: AppHandle, engine: State<'_, Arc<FtpEngine>>, ip: Option<String>, port: Option<u16>) -> Result<FtpStatus, String> {
+async fn start_server(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, ip: Option<String>, port: Option<u16>) -> Result<ServerStatus, String> {
     engine.start(app, ip, port).await
 }
 
 #[tauri::command]
-async fn stop_ftp(app: AppHandle, engine: State<'_, Arc<FtpEngine>>) -> Result<FtpStatus, String> {
+async fn stop_server(app: AppHandle, engine: State<'_, Arc<ServerEngine>>) -> Result<ServerStatus, String> {
     Ok(engine.stop(app).await)
 }
 
 #[tauri::command]
-fn get_ftp_status(engine: State<'_, Arc<FtpEngine>>) -> FtpStatus {
+fn get_server_status(engine: State<'_, Arc<ServerEngine>>) -> ServerStatus {
     engine.status()
 }
 
 #[tauri::command]
-fn get_pool(engine: State<'_, Arc<FtpEngine>>) -> Vec<PoolItem> {
+fn get_pool(engine: State<'_, Arc<ServerEngine>>) -> Vec<PoolItem> {
     engine.pool().items()
 }
 
@@ -48,13 +48,13 @@ fn broadcast_pool(app: &AppHandle, pool: &PoolState) {
 /// Adds one or more host paths. Folder sizes are computed in the background
 /// and pushed via a `pool_changed` event when ready.
 #[tauri::command]
-fn add_path_to_pool(app: AppHandle, engine: State<'_, Arc<FtpEngine>>, paths: Vec<String>) -> Result<Vec<PoolItem>, String> {
+fn add_path_to_pool(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, paths: Vec<String>) -> Result<Vec<PoolItem>, String> {
     let pool = engine.pool().clone();
     let mut errors = Vec::new();
     for raw in paths {
         match pool.add(&raw) {
             Ok(item) => {
-                ftp::emit_log(&app, "info", "server", format!("Added {} to pool", item.name));
+                http::emit_log(&app, "info", "server", format!("Added {} to pool", item.name));
                 if item.is_dir {
                     let app = app.clone();
                     let pool = pool.clone();
@@ -79,10 +79,10 @@ fn add_path_to_pool(app: AppHandle, engine: State<'_, Arc<FtpEngine>>, paths: Ve
 }
 
 #[tauri::command]
-fn remove_path_from_pool(app: AppHandle, engine: State<'_, Arc<FtpEngine>>, id: String) -> Vec<PoolItem> {
+fn remove_path_from_pool(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, id: String) -> Vec<PoolItem> {
     let pool = engine.pool();
     if pool.remove(&id) {
-        ftp::emit_log(&app, "info", "server", "Removed item from pool");
+        http::emit_log(&app, "info", "server", "Removed item from pool");
     }
     broadcast_pool(&app, pool);
     pool.items()
@@ -90,7 +90,7 @@ fn remove_path_from_pool(app: AppHandle, engine: State<'_, Arc<FtpEngine>>, id: 
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let engine = Arc::new(FtpEngine::new(Arc::new(PoolState::default())));
+    let engine = Arc::new(ServerEngine::new(Arc::new(PoolState::default())));
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -99,17 +99,16 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_network_interfaces,
             get_hotspot_interface,
-            start_ftp,
-            stop_ftp,
-            get_ftp_status,
+            start_server,
+            stop_server,
+            get_server_status,
             get_pool,
             add_path_to_pool,
             remove_path_from_pool,
         ])
         .on_window_event(|window, event| {
-            // Make sure the FTP listener goes away with the window.
             if let tauri::WindowEvent::Destroyed = event {
-                let engine = window.state::<Arc<FtpEngine>>().inner().clone();
+                let engine = window.state::<Arc<ServerEngine>>().inner().clone();
                 let app = window.app_handle().clone();
                 tauri::async_runtime::block_on(async move {
                     let _ = engine.stop(app).await;
