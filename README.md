@@ -43,7 +43,7 @@ The phone sees one unified listing regardless of which drive each item lives on.
 * Dark, touch-first list: folders first, type-coloured icons, size and age per file.
 * Breadcrumb navigation, in-folder search, sort by name / size / newest.
 * Tap a file to download it; tap the eye to preview media; folders open in place.
-* **Download manager:** each file shows a progress bar with speed and time left; a **Downloads** tab lists everything with pause / resume (HTTP ranges), cancel, "Pause all" and "Clear finished". Downloads run inside the page (plain `http://` pages cannot use service workers), chunks are stored in IndexedDB on the phone, and a finished file is handed to the browser with one tap on **Save**.
+* **One-tap downloads:** tapping a file hands it to the phone browser's own download manager, which saves it to the Downloads folder and shows progress in the notification shade. An optional **Track downloads in this page** switch (Downloads tab, off by default) runs downloads inside the page instead, with progress bars, pause / resume over HTTP ranges and cancel; that mode stores chunks in IndexedDB and ends with a one-tap **Save**, because plain `http://` pages cannot use service workers to stream straight to disk.
 * **Upload tab:** phones can send files to the laptop with per-file progress. Files land in a quarantine **inbox** on the laptop and are shared only after approval.
 * Auto-refreshes every 15 s and whenever the tab becomes visible.
 
