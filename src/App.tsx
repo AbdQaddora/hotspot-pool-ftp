@@ -5,11 +5,13 @@ import { Nav, type Tab } from "@/components/Nav";
 import { PoolManager } from "@/components/PoolManager";
 import { StatusBar } from "@/components/StatusBar";
 import { ShareTab } from "@/components/tabs/ShareTab";
+import { WifiTab } from "@/components/tabs/WifiTab";
 import { ActivityTab } from "@/components/tabs/ActivityTab";
 import { SettingsTab } from "@/components/tabs/SettingsTab";
 import { InboxTab } from "@/components/tabs/InboxTab";
 import { useUploads } from "@/hooks/useUploads";
 import { useServer } from "@/hooks/useServer";
+import { useWifiShare } from "@/hooks/useWifiShare";
 import { usePool } from "@/hooks/usePool";
 import { useDragDrop } from "@/hooks/useDragDrop";
 
@@ -19,8 +21,9 @@ export default function App() {
   const uploads = useUploads();
   const [tab, setTab] = useState<Tab>(() => {
     const t = new URLSearchParams(window.location.search).get("tab");
-    return t === "pool" || t === "activity" || t === "settings" || t === "inbox" ? t : "share";
+    return t === "pool" || t === "activity" || t === "settings" || t === "inbox" || t === "wifi" ? t : "share";
   });
+  const wifi = useWifiShare({ enabled: tab === "wifi", revision: server.hotspot.state });
   const onDrop = useCallback(
     (paths: string[]) => {
       setTab("pool");
@@ -29,11 +32,12 @@ export default function App() {
     [pool.addPaths],
   );
   const dragging = useDragDrop(onDrop);
-  const error = pool.error ?? server.error ?? uploads.error;
+  const error = pool.error ?? server.error ?? uploads.error ?? wifi.error;
   const dismiss = () => {
     pool.dismissError();
     server.dismissError();
     uploads.dismissError();
+    wifi.dismissError();
   };
 
   return (
@@ -66,6 +70,9 @@ export default function App() {
                     onCheckName={server.checkName}
                     onGoSettings={() => setTab("settings")}
                   />
+                )}
+                {tab === "wifi" && (
+                  <WifiTab wifi={wifi} hotspot={server.hotspot} settings={server.settings} busy={server.busy} onToggleHotspot={server.toggleHotspot} onSaveSettings={server.saveSettings} onOpenHotspotSettings={server.openHotspotSettings} />
                 )}
                 {tab === "inbox" && (
                   <InboxTab items={uploads.items} info={uploads.info} busy={uploads.busy} settings={server.settings} onApprove={uploads.approve} onReject={uploads.reject} onApproveAll={uploads.approveAll} onRejectAll={uploads.rejectAll} onGoSettings={() => setTab("settings")} />

@@ -1,11 +1,12 @@
-import { Activity, FolderOpen, Inbox, Settings, Share2 } from "lucide-react";
+import { Activity, FolderOpen, Globe, Inbox, Settings, Share2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ServerStatus, StatsEvent } from "@/lib/tauri";
 
-export type Tab = "share" | "pool" | "inbox" | "activity" | "settings";
+export type Tab = "share" | "wifi" | "pool" | "inbox" | "activity" | "settings";
 
 const ITEMS: Array<{ id: Tab; label: string; icon: React.ComponentType<{ className?: string }>; hint: string }> = [
   { id: "share", label: "Share", icon: Share2, hint: "Connect a phone" },
+  { id: "wifi", label: "Share Wi-Fi", icon: Globe, hint: "Internet for devices" },
   { id: "pool", label: "Pool", icon: FolderOpen, hint: "Files & folders" },
   { id: "inbox", label: "Inbox", icon: Inbox, hint: "Uploads to review" },
   { id: "activity", label: "Activity", icon: Activity, hint: "Devices & log" },

@@ -106,6 +106,50 @@ export interface HotspotInfo {
   error: string | null;
 }
 
+export interface Upstream {
+  /** Adapter id (lowercase GUID, no braces). */
+  id: string;
+  name: string;
+  kind: "wifi" | "ethernet" | "cellular" | "other";
+  connectivity: "internet" | "signin" | "local" | "none";
+  /** The connection Windows itself treats as the internet one. */
+  isDefault: boolean;
+}
+
+export interface SharingConnection {
+  id: string;
+  name: string;
+  connected: boolean;
+  sharing: "public" | "private" | "none";
+}
+
+export interface SharingState {
+  available: boolean;
+  connections: SharingConnection[];
+  publicId: string | null;
+  privateId: string | null;
+  error: string | null;
+}
+
+export interface HotspotClient {
+  mac: string;
+  name: string | null;
+}
+
+export type WifiHealth = "sharing" | "not_shared" | "wrong_upstream" | "signin" | "no_internet" | "hotspot_off" | "unknown";
+
+export interface WifiShareStatus {
+  hotspot: HotspotInfo;
+  upstreams: Upstream[];
+  selectedUpstream: string | null;
+  effectiveUpstream: string | null;
+  sharing: SharingState;
+  hotspotAdapter: NetInterface | null;
+  clients: HotspotClient[];
+  health: WifiHealth;
+  signInUrl: string;
+}
+
 export interface ShareResult {
   hotspot: HotspotInfo;
   status: ServerStatus;
@@ -127,6 +171,8 @@ export const api = {
   setHotspot: (on: boolean) => invoke<HotspotInfo>("set_hotspot", { on }),
   configureHotspot: (ssid: string, passphrase: string) => invoke<HotspotInfo>("configure_hotspot", { ssid, passphrase }),
   hotspotSettingsUrl: () => invoke<string>("hotspot_settings_url"),
+  getWifiShareStatus: () => invoke<WifiShareStatus>("get_wifi_share_status"),
+  applyInternetSharing: () => invoke<WifiShareStatus>("apply_internet_sharing"),
   autoShare: (ip?: string) => invoke<ShareResult>("auto_share", { ip: ip ?? null }),
   stopShare: (turnOffHotspot: boolean) => invoke<ShareResult>("stop_share", { turnOffHotspot }),
   getNetworkInterfaces: () => invoke<NetInterface[]>("get_network_interfaces"),

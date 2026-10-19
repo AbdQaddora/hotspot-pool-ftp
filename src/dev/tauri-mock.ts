@@ -41,6 +41,37 @@ let inbox = [
 ];
 const inboxInfo = () => ({ dir: "C:\\Users\\abd\\AppData\\Roaming\\com.hotspotpool.ftp\\inbox", usedBytes: inbox.reduce((a, i) => a + i.size, 0), quotaBytes: settings.inboxQuotaMb * 1024 * 1024, pending: inbox.length });
 let nameResolves: boolean | null = null;
+let mockShared = false;
+const upstreams = [
+  { id: "abcdef01-1234-5678-9abc-def012345678", name: "CafeNet", kind: "wifi", connectivity: "internet", isDefault: true },
+  { id: "11111111-2222-3333-4444-555555555555", name: "Ethernet", kind: "ethernet", connectivity: "none", isDefault: false },
+];
+const wifiStatus = () => {
+  const effective = upstreams.find((u) => u.id === settings.upstreamAdapter)?.id ?? upstreams[0].id;
+  const publicId = mockShared ? effective : null;
+  const health = !hotspotOn ? "hotspot_off" : mockShared ? "sharing" : "not_shared";
+  return {
+    hotspot: hotspotInfo(),
+    upstreams,
+    selectedUpstream: settings.upstreamAdapter,
+    effectiveUpstream: effective,
+    sharing: {
+      available: true,
+      connections: [
+        { id: upstreams[0].id, name: "Wi-Fi", connected: true, sharing: publicId === upstreams[0].id ? "public" : "none" },
+        { id: upstreams[1].id, name: "Ethernet", connected: false, sharing: publicId === upstreams[1].id ? "public" : "none" },
+        { id: ifaces[0].adapterId, name: ifaces[0].name, connected: hotspotOn, sharing: mockShared ? "private" : "none" },
+      ],
+      publicId,
+      privateId: mockShared ? ifaces[0].adapterId : null,
+      error: null,
+    },
+    hotspotAdapter: hotspotOn ? ifaces[0] : null,
+    clients: hotspotOn ? [{ mac: "6C-88-14-16-41-94", name: "Abd's iPhone" }, { mac: "A4-50-46-7B-10-2C", name: null }] : [],
+    health,
+    signInUrl: "http://www.msftconnecttest.com/redirect",
+  };
+};
 const ftpStatus = () =>
   running
     ? { running: true, ip: "192.168.137.1", port: 80, url: "http://192.168.137.1", name: `${settings.name}.${settings.suffix}`, nameUrl: `http://${settings.name}.${settings.suffix}`, nameResolves, hostnameUrl: nameResolves ? "http://abd-laptop" : null }
@@ -125,6 +156,13 @@ async function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<
       return hotspotInfo();
     case "hotspot_settings_url":
       return "ms-settings:network-mobilehotspot";
+    case "get_wifi_share_status":
+      return wifiStatus();
+    case "apply_internet_sharing":
+      await new Promise((r) => setTimeout(r, 500));
+      mockShared = true;
+      log("success", "server", "Devices on the hotspot now use CafeNet for internet");
+      return wifiStatus();
     case "auto_share": {
       const started = !hotspotOn;
       hotspotOn = true;
