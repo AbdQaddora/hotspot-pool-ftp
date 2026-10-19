@@ -81,8 +81,14 @@ pub fn ensure_hosts_entry(name: &str, ip: Ipv4Addr) -> Result<bool, String> {
             "Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','\"{}\"'",
             script.display()
         );
+        // CREATE_NO_WINDOW: a console app would otherwise flash a window before
+        // -WindowStyle Hidden takes effect.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        use std::os::windows::process::CommandExt;
         let out = std::process::Command::new("powershell.exe")
             .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &arg])
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(std::process::Stdio::null())
             .output()
             .map_err(|e| format!("Could not launch PowerShell: {e}"))?;
         if !out.status.success() {
