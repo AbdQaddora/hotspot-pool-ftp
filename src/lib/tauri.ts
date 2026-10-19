@@ -133,7 +133,9 @@ export interface SharingState {
 
 export interface HotspotClient {
   mac: string;
+  /** Rarely known; Windows mostly reports addresses only. */
   name: string | null;
+  ip: string | null;
 }
 
 export type WifiHealth = "sharing" | "not_shared" | "wrong_upstream" | "signin" | "no_internet" | "hotspot_off" | "unknown";
@@ -171,7 +173,8 @@ export const api = {
   setHotspot: (on: boolean) => invoke<HotspotInfo>("set_hotspot", { on }),
   configureHotspot: (ssid: string, passphrase: string) => invoke<HotspotInfo>("configure_hotspot", { ssid, passphrase }),
   hotspotSettingsUrl: () => invoke<string>("hotspot_settings_url"),
-  getWifiShareStatus: () => invoke<WifiShareStatus>("get_wifi_share_status"),
+  /** `fresh` forces a new read of the Windows sharing state instead of a recent cached one. */
+  getWifiShareStatus: (fresh = false) => invoke<WifiShareStatus>("get_wifi_share_status", { fresh }),
   applyInternetSharing: () => invoke<WifiShareStatus>("apply_internet_sharing"),
   autoShare: (ip?: string) => invoke<ShareResult>("auto_share", { ip: ip ?? null }),
   stopShare: (turnOffHotspot: boolean) => invoke<ShareResult>("stop_share", { turnOffHotspot }),

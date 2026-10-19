@@ -97,13 +97,13 @@ struct RawConnection {
 pub fn parse_sharing_json(json: &str) -> SharingState {
     let text = json.trim();
     if text.is_empty() {
-        return SharingState { available: true, connections: vec![], public_id: None, private_id: None, error: None };
+        return SharingState::unavailable("Windows printed no sharing state");
     }
     let raws: Vec<RawConnection> = match serde_json::from_str::<Vec<RawConnection>>(text) {
         Ok(v) => v,
         Err(_) => match serde_json::from_str::<RawConnection>(text) {
             Ok(one) => vec![one],
-            Err(_) => return SharingState::unavailable(text.lines().next().unwrap_or("").chars().take(200).collect::<String>()),
+            Err(_) => return SharingState::unavailable(crate::elevate::first_line(text).chars().take(200).collect::<String>()),
         },
     };
     let mut st = SharingState { available: true, connections: vec![], public_id: None, private_id: None, error: None };
@@ -128,6 +128,7 @@ pub fn parse_sharing_json(json: &str) -> SharingState {
 pub fn read_script() -> &'static str {
     concat!(
         "$ErrorActionPreference = 'Stop'\r\n",
+        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\r\n",
         "$m = New-Object -ComObject HNetCfg.HNetShare\r\n",
         "$out = @()\r\n",
         "foreach ($c in $m.EnumEveryConnection) {\r\n",
@@ -147,11 +148,11 @@ pub fn apply_script(public: &str, private: &str) -> Result<String, String> {
     let priv_id = norm_guid(private).ok_or_else(|| format!("Not an adapter id: {private}"))?;
     Ok(format!(
         concat!(
-            "$ErrorActionPreference = 'Stop'\r\n",
             "$m = New-Object -ComObject HNetCfg.HNetShare\r\n",
             "$conns = @($m.EnumEveryConnection)\r\n",
             "$cfgOf = {{ param($c) $m.INetSharingConfigurationForINetConnection.Invoke($c) }}\r\n",
-            "foreach ($c in $conns) {{ $cfg = & $cfgOf $c; if ($cfg.SharingEnabled) {{ $cfg.DisableSharing() }} }}\r\n",
+            "# Disabling the public side also clears its private peer; a stale 'enabled' on the peer may then throw.\r\n",
+            "foreach ($c in $conns) {{ $cfg = & $cfgOf $c; if ($cfg.SharingEnabled) {{ try {{ $cfg.DisableSharing() }} catch {{}} }} }}\r\n",
             "$pub = $conns | Where-Object {{ $m.NetConnectionProps.Invoke($_).Guid -eq '{pub}' }} | Select-Object -First 1\r\n",
             "$priv = $conns | Where-Object {{ $m.NetConnectionProps.Invoke($_).Guid -eq '{priv}' }} | Select-Object -First 1\r\n",
             "if (-not $pub) {{ throw 'Shared connection not found' }}\r\n",
@@ -216,6 +217,47 @@ pub fn sharing_state() -> SharingState {
     }
 }
 
+/// A value plus when it was computed; `get` recomputes when asked for a
+/// fresh one or when the value is older than `max_age`.
+pub struct Cached<T> {
+    pub value: Option<T>,
+    pub stamp: Option<std::time::Instant>,
+}
+
+impl<T> Default for Cached<T> {
+    fn default() -> Self {
+        Cached { value: None, stamp: None }
+    }
+}
+
+impl<T: Clone> Cached<T> {
+    pub fn get(&mut self, fresh: bool, max_age: std::time::Duration, compute: impl FnOnce() -> T) -> T {
+        let stale = self.stamp.map(|t| t.elapsed() > max_age).unwrap_or(true);
+        if fresh || stale || self.value.is_none() {
+            self.value = Some(compute());
+            self.stamp = Some(std::time::Instant::now());
+        }
+        self.value.clone().expect("just set")
+    }
+}
+
+/// Reading ICS state spawns a PowerShell process, so timer polls reuse a
+/// recent answer; `fresh` forces a new read (after a change or a click).
+pub fn sharing_state_cached(fresh: bool) -> SharingState {
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<Cached<SharingState>>> = Mutex::new(None);
+    let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    guard.get_or_insert_with(Cached::default).get(fresh, std::time::Duration::from_secs(20), sharing_state)
+}
+
+/// The hotspot's own adapter shows up as a profile too; it can't be its own upstream.
+pub fn without_adapter(upstreams: Vec<Upstream>, adapter_id: Option<&str>) -> Vec<Upstream> {
+    match adapter_id {
+        Some(id) => upstreams.into_iter().filter(|u| u.id != id).collect(),
+        None => upstreams,
+    }
+}
+
 /// Point ICS from `public` to `private` (one UAC prompt).
 pub fn apply_sharing(public: &str, private: &str) -> Result<(), String> {
     let script = apply_script(public, private)?;
@@ -256,13 +298,14 @@ pub struct WifiShareStatus {
     pub sign_in_url: &'static str,
 }
 
-/// Blocking: queries Windows (WinRT + one hidden PowerShell). Run off the UI thread.
-pub fn snapshot(selected: Option<&str>) -> WifiShareStatus {
+/// Blocking: queries Windows (WinRT + one hidden PowerShell unless a recent
+/// ICS answer is reused). Run off the UI thread.
+pub fn snapshot(selected: Option<&str>, fresh: bool) -> WifiShareStatus {
     let hotspot = crate::hotspot::info();
-    let upstreams = list_upstreams();
-    let effective = effective_upstream(selected, &upstreams).cloned();
-    let sharing = sharing_state();
     let hotspot_adapter = crate::network::list_interfaces().into_iter().find(|i| i.is_hotspot);
+    let upstreams = without_adapter(list_upstreams(), hotspot_adapter.as_ref().and_then(|a| a.adapter_id.as_deref()));
+    let effective = effective_upstream(selected, &upstreams).cloned();
+    let sharing = sharing_state_cached(fresh);
     let clients = if hotspot.state == "on" { crate::hotspot::clients() } else { vec![] };
     let health = assess(hotspot.state == "on", effective.as_ref(), &sharing, hotspot_adapter.as_ref().and_then(|a| a.adapter_id.as_deref()));
     WifiShareStatus {
@@ -355,16 +398,50 @@ mod tests {
         assert!(s.available);
         assert_eq!(s.connections.len(), 1);
         assert_eq!(s.public_id, None);
+        // The read script always prints at least "[]": empty output means it did not run.
         let e = parse_sharing_json("");
-        assert!(e.available);
-        assert!(e.connections.is_empty());
+        assert!(!e.available);
+        assert!(e.error.is_some());
     }
 
     #[test]
     fn parse_rejects_garbage() {
-        let s = parse_sharing_json("Access denied");
+        let s = parse_sharing_json("Access denied\r\nAt C:\\x.ps1:2 char:6\r\n+ ~~~");
         assert!(!s.available);
-        assert!(s.error.is_some());
+        assert_eq!(s.error.as_deref(), Some("Access denied"));
+    }
+
+    #[test]
+    fn scripts_are_robust() {
+        assert!(read_script().contains("[Console]::OutputEncoding"));
+        let s = apply_script(A, H).unwrap();
+        assert!(s.contains("try { $cfg.DisableSharing() } catch {}"));
+    }
+
+    #[test]
+    fn hotspot_adapter_is_not_an_upstream() {
+        let list = vec![up(A, "internet"), up(H, "local")];
+        let kept = without_adapter(list, Some(H));
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].id, A);
+        assert_eq!(without_adapter(vec![up(A, "internet")], None).len(), 1);
+    }
+
+    #[test]
+    fn cache_reuses_recent_values() {
+        let mut c = Cached::<u32>::default();
+        let mut calls = 0;
+        let mut get = |fresh: bool, c: &mut Cached<u32>| {
+            c.get(fresh, std::time::Duration::from_secs(60), || {
+                calls += 1;
+                calls
+            })
+        };
+        assert_eq!(get(false, &mut c), 1);
+        assert_eq!(get(false, &mut c), 1);
+        assert_eq!(get(true, &mut c), 2);
+        c.stamp = Some(std::time::Instant::now() - std::time::Duration::from_secs(120));
+        assert_eq!(get(false, &mut c), 3);
     }
 
     #[test]

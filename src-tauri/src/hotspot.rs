@@ -34,7 +34,17 @@ impl HotspotInfo {
 #[serde(rename_all = "camelCase")]
 pub struct HotspotClient {
     pub mac: String,
+    /// DHCP/mDNS name when Windows knows one (it usually does not).
     pub name: Option<String>,
+    pub ip: Option<String>,
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+/// Windows lists a client's HostNames by type (0 DomainName, 1 Ipv4, 2 Ipv6,
+/// 3 Bluetooth); only a DomainName is a name, the Ipv4 one is its address.
+pub fn split_hostnames(entries: &[(i32, String)]) -> (Option<String>, Option<String>) {
+    let pick = |t: i32| entries.iter().find(|(k, v)| *k == t && !v.is_empty()).map(|(_, v)| v.clone());
+    (pick(0), pick(1))
 }
 
 /// Wi-Fi join string for QR codes (ZXing format understood by iOS/Android cameras).
@@ -131,14 +141,12 @@ mod imp {
         list.into_iter()
             .map(|c| {
                 let mac = c.MacAddress().map(|s| s.to_string()).unwrap_or_default();
-                let name = c
+                let entries: Vec<(i32, String)> = c
                     .HostNames()
-                    .ok()
-                    .and_then(|h| h.into_iter().next())
-                    .and_then(|h| h.DisplayName().ok())
-                    .map(|s| s.to_string())
-                    .filter(|s| !s.is_empty());
-                super::HotspotClient { mac, name }
+                    .map(|h| h.into_iter().filter_map(|h| Some((h.Type().ok()?.0, h.DisplayName().ok()?.to_string()))).collect())
+                    .unwrap_or_default();
+                let (name, ip) = super::split_hostnames(&entries);
+                super::HotspotClient { mac, name, ip }
             })
             .collect()
     }
@@ -229,6 +237,18 @@ pub fn settings_url() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hostnames_split_into_name_and_ip() {
+        // HostNameType: 0 DomainName, 1 Ipv4, 2 Ipv6, 3 Bluetooth.
+        let (name, ip) = split_hostnames(&[(1, "192.168.137.23".into()), (2, "fe80::1".into())]);
+        assert_eq!(name, None);
+        assert_eq!(ip.as_deref(), Some("192.168.137.23"));
+        let (name, ip) = split_hostnames(&[(0, "Galaxy-S24".into()), (1, "192.168.137.41".into())]);
+        assert_eq!(name.as_deref(), Some("Galaxy-S24"));
+        assert_eq!(ip.as_deref(), Some("192.168.137.41"));
+        assert_eq!(split_hostnames(&[]), (None, None));
+    }
 
     #[test]
     fn wifi_qr_escapes_specials() {

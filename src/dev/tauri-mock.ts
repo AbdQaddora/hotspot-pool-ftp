@@ -67,7 +67,7 @@ const wifiStatus = () => {
       error: null,
     },
     hotspotAdapter: hotspotOn ? ifaces[0] : null,
-    clients: hotspotOn ? [{ mac: "6C-88-14-16-41-94", name: "Abd's iPhone" }, { mac: "A4-50-46-7B-10-2C", name: null }] : [],
+    clients: hotspotOn ? [{ mac: "6C-88-14-16-41-94", name: null, ip: "192.168.137.23" }, { mac: "A4-50-46-7B-10-2C", name: "Galaxy-S24", ip: "192.168.137.41" }] : [],
     health,
     signInUrl: "http://www.msftconnecttest.com/redirect",
   };

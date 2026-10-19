@@ -23,7 +23,7 @@ export default function App() {
     const t = new URLSearchParams(window.location.search).get("tab");
     return t === "pool" || t === "activity" || t === "settings" || t === "inbox" || t === "wifi" ? t : "share";
   });
-  const wifi = useWifiShare({ enabled: tab === "wifi", revision: server.hotspot.state });
+  const wifi = useWifiShare({ enabled: tab === "wifi", revision: `${server.hotspot.state}|${server.settings.upstreamAdapter ?? ""}` });
   const onDrop = useCallback(
     (paths: string[]) => {
       setTab("pool");

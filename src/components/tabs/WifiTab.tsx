@@ -225,7 +225,8 @@ export function WifiTab({ wifi, hotspot, settings, busy, onToggleHotspot, onSave
               {s!.clients.map((c) => (
                 <li key={c.mac} className="flex items-center gap-3 px-5 py-2.5 text-[12.5px]">
                   <Smartphone className="size-4 text-muted-foreground" />
-                  <span className="min-w-0 flex-1 truncate font-medium">{c.name ?? "Unknown device"}</span>
+                  <span className="min-w-0 flex-1 truncate font-medium">{c.name ?? c.ip ?? "Device"}</span>
+                  {c.name && c.ip && <span className="font-mono text-[11.5px] text-muted-foreground">{c.ip}</span>}
                   <span className="font-mono text-[11.5px] text-muted-foreground">{c.mac}</span>
                 </li>
               ))}

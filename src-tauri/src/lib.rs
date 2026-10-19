@@ -259,9 +259,9 @@ async fn configure_hotspot(ssid: String, passphrase: String) -> Result<HotspotIn
 }
 
 #[tauri::command]
-async fn get_wifi_share_status(engine: State<'_, Arc<ServerEngine>>) -> Result<ics::WifiShareStatus, String> {
+async fn get_wifi_share_status(engine: State<'_, Arc<ServerEngine>>, fresh: bool) -> Result<ics::WifiShareStatus, String> {
     let selected = engine.settings().upstream_adapter;
-    tauri::async_runtime::spawn_blocking(move || ics::snapshot(selected.as_deref())).await.map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || ics::snapshot(selected.as_deref(), fresh)).await.map_err(|e| e.to_string())
 }
 
 /// Wire Windows Internet Connection Sharing from the chosen upstream to the
@@ -270,7 +270,7 @@ async fn get_wifi_share_status(engine: State<'_, Arc<ServerEngine>>) -> Result<i
 async fn apply_internet_sharing(app: AppHandle, engine: State<'_, Arc<ServerEngine>>) -> Result<ics::WifiShareStatus, String> {
     let selected = engine.settings().upstream_adapter;
     let sel = selected.clone();
-    let before = tauri::async_runtime::spawn_blocking(move || ics::snapshot(sel.as_deref())).await.map_err(|e| e.to_string())?;
+    let before = tauri::async_runtime::spawn_blocking(move || ics::snapshot(sel.as_deref(), true)).await.map_err(|e| e.to_string())?;
     let Some(public) = before.effective_upstream.clone() else { return Err("Connect the laptop to the internet first.".into()) };
     let Some(private) = before.hotspot_adapter.as_ref().and_then(|a| a.adapter_id.clone()) else {
         return Err("Turn on the hotspot first; Windows creates its adapter then.".into());
@@ -278,13 +278,15 @@ async fn apply_internet_sharing(app: AppHandle, engine: State<'_, Arc<ServerEngi
     let upstream_name = before.upstreams.iter().find(|u| u.id == public).map(|u| u.name.clone()).unwrap_or_default();
     http::emit_log(&app, "info", "server", format!("Sharing {upstream_name} with the hotspot (Windows will ask for permission)…"));
     tauri::async_runtime::spawn_blocking(move || ics::apply_sharing(&public, &private)).await.map_err(|e| e.to_string())??;
-    let after = tauri::async_runtime::spawn_blocking(move || ics::snapshot(selected.as_deref())).await.map_err(|e| e.to_string())?;
+    let after = tauri::async_runtime::spawn_blocking(move || ics::snapshot(selected.as_deref(), true)).await.map_err(|e| e.to_string())?;
     if after.health == "sharing" {
         http::emit_log(&app, "success", "server", format!("Devices on the hotspot now use {upstream_name} for internet"));
+        Ok(after)
     } else {
-        http::emit_log(&app, "warn", "server", format!("Internet Connection Sharing was applied but Windows reports: {}", after.health));
+        let why = after.sharing.error.clone().unwrap_or_else(|| after.health.replace('_', " "));
+        http::emit_log(&app, "warn", "server", format!("Internet Connection Sharing was applied but Windows still reports: {why}"));
+        Err(format!("Sharing was applied, but Windows still reports: {why}. Try turning the hotspot off and on, then Fix sharing again."))
     }
-    Ok(after)
 }
 
 #[tauri::command]
