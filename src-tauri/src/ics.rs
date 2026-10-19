@@ -62,6 +62,7 @@ pub fn norm_guid(s: &str) -> Option<String> {
 }
 
 /// GUID from its parts, in the normalized form.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn guid_parts_string(d1: u32, d2: u16, d3: u16, d4: [u8; 8]) -> String {
     format!(
         "{:08x}-{:04x}-{:04x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
@@ -227,6 +228,56 @@ pub fn apply_sharing(public: &str, private: &str) -> Result<(), String> {
     })
 }
 
+/// The upstream that is (or would be) shared: the selected one when it is
+/// still connected, else Windows's default, else any connection with
+/// internet, else the first.
+pub fn effective_upstream<'a>(selected: Option<&str>, upstreams: &'a [Upstream]) -> Option<&'a Upstream> {
+    selected
+        .and_then(|id| upstreams.iter().find(|u| u.id == id))
+        .or_else(|| upstreams.iter().find(|u| u.is_default))
+        .or_else(|| upstreams.iter().find(|u| u.connectivity == "internet"))
+        .or_else(|| upstreams.first())
+}
+
+/// Everything the Share Wi-Fi tab shows, in one snapshot.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WifiShareStatus {
+    pub hotspot: crate::hotspot::HotspotInfo,
+    pub upstreams: Vec<Upstream>,
+    /// What the user picked (settings); None = automatic.
+    pub selected_upstream: Option<String>,
+    /// What is actually used, after fallbacks.
+    pub effective_upstream: Option<String>,
+    pub sharing: SharingState,
+    pub hotspot_adapter: Option<crate::network::NetInterface>,
+    pub clients: Vec<crate::hotspot::HotspotClient>,
+    pub health: &'static str,
+    pub sign_in_url: &'static str,
+}
+
+/// Blocking: queries Windows (WinRT + one hidden PowerShell). Run off the UI thread.
+pub fn snapshot(selected: Option<&str>) -> WifiShareStatus {
+    let hotspot = crate::hotspot::info();
+    let upstreams = list_upstreams();
+    let effective = effective_upstream(selected, &upstreams).cloned();
+    let sharing = sharing_state();
+    let hotspot_adapter = crate::network::list_interfaces().into_iter().find(|i| i.is_hotspot);
+    let clients = if hotspot.state == "on" { crate::hotspot::clients() } else { vec![] };
+    let health = assess(hotspot.state == "on", effective.as_ref(), &sharing, hotspot_adapter.as_ref().and_then(|a| a.adapter_id.as_deref()));
+    WifiShareStatus {
+        hotspot,
+        upstreams,
+        selected_upstream: selected.map(String::from),
+        effective_upstream: effective.map(|u| u.id),
+        sharing,
+        hotspot_adapter,
+        clients,
+        health,
+        sign_in_url: SIGN_IN_URL,
+    }
+}
+
 /// Health of internet sharing for the devices. Exact strings are part of the
 /// UI contract: sharing | not_shared | wrong_upstream | signin | no_internet |
 /// hotspot_off | unknown.
@@ -340,6 +391,21 @@ mod tests {
         assert_eq!(assess(true, Some(&wifi), &sharing(None, None), Some(H)), "not_shared");
         assert_eq!(assess(true, Some(&wifi), &sharing(Some(B), Some(H)), Some(H)), "wrong_upstream");
         assert_eq!(assess(true, Some(&wifi), &sharing(Some(A), Some(H)), Some(H)), "sharing");
+    }
+
+    #[test]
+    fn effective_upstream_rules() {
+        let eth = Upstream { id: B.into(), name: "Ethernet".into(), kind: "ethernet", connectivity: "internet", is_default: false };
+        let wifi = Upstream { id: A.into(), name: "Wi-Fi".into(), kind: "wifi", connectivity: "internet", is_default: true };
+        let local = Upstream { id: H.into(), name: "Lab".into(), kind: "other", connectivity: "local", is_default: false };
+        let list = vec![local.clone(), eth.clone(), wifi.clone()];
+        assert_eq!(effective_upstream(Some(B), &list).map(|u| u.id.as_str()), Some(B));
+        assert_eq!(effective_upstream(Some("not-there"), &list).map(|u| u.id.as_str()), Some(A));
+        assert_eq!(effective_upstream(None, &list).map(|u| u.id.as_str()), Some(A));
+        let no_default = vec![local.clone(), eth.clone()];
+        assert_eq!(effective_upstream(None, &no_default).map(|u| u.id.as_str()), Some(B));
+        assert_eq!(effective_upstream(None, &[local.clone()]).map(|u| u.id.as_str()), Some(H));
+        assert_eq!(effective_upstream(None, &[]), None);
     }
 
     #[test]

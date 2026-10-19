@@ -3,6 +3,7 @@
 //! (hosts file, Internet Connection Sharing).
 
 /// Single-quoted PowerShell string literal.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn ps_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
 }
