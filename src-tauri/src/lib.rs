@@ -1,3 +1,4 @@
+mod elevate;
 mod hotspot;
 mod http;
 mod names;

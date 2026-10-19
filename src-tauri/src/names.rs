@@ -62,42 +62,21 @@ pub fn ensure_hosts_entry(name: &str, ip: Ipv4Addr) -> Result<bool, String> {
     #[cfg(windows)]
     {
         let new_contents = rewrite_hosts(&current, name, ip);
-        let tmp_dir = std::env::temp_dir().join("hotspot-pool");
-        std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
-        let payload = tmp_dir.join("hosts.new");
+        let payload = std::env::temp_dir().join("hotspot-pool").join("hosts.new");
+        std::fs::create_dir_all(payload.parent().unwrap()).map_err(|e| e.to_string())?;
         std::fs::write(&payload, new_contents.as_bytes()).map_err(|e| e.to_string())?;
-        let script = tmp_dir.join("apply-hosts.ps1");
-        std::fs::write(
-            &script,
-            format!(
-                "$ErrorActionPreference = 'Stop'\r\nCopy-Item -LiteralPath '{}' -Destination '{}' -Force\r\nipconfig /flushdns | Out-Null\r\n",
-                payload.display().to_string().replace('\'', "''"),
-                path.display().to_string().replace('\'', "''")
-            ),
-        )
-        .map_err(|e| e.to_string())?;
-        // Outer (non-elevated) PowerShell launches an elevated one and waits for it.
-        let arg = format!(
-            "Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','\"{}\"'",
-            script.display()
+        let script = format!(
+            "$ErrorActionPreference = 'Stop'\r\nCopy-Item -LiteralPath {} -Destination {} -Force\r\nipconfig /flushdns | Out-Null\r\n",
+            crate::elevate::ps_quote(&payload.display().to_string()),
+            crate::elevate::ps_quote(&path.display().to_string())
         );
-        // CREATE_NO_WINDOW: a console app would otherwise flash a window before
-        // -WindowStyle Hidden takes effect.
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        use std::os::windows::process::CommandExt;
-        let out = std::process::Command::new("powershell.exe")
-            .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &arg])
-            .creation_flags(CREATE_NO_WINDOW)
-            .stdin(std::process::Stdio::null())
-            .output()
-            .map_err(|e| format!("Could not launch PowerShell: {e}"))?;
-        if !out.status.success() {
-            let err = String::from_utf8_lossy(&out.stderr);
-            if err.contains("canceled") || err.contains("cancelled") || err.contains("1223") {
-                return Err("Windows needs permission to add the name to the hosts file. The prompt was cancelled; phones can still use the IP link.".into());
+        crate::elevate::run_elevated("apply-hosts.ps1", &script).map_err(|e| {
+            if e.contains("cancelled") {
+                "Windows needs permission to add the name to the hosts file. The prompt was cancelled; phones can still use the IP link.".to_string()
+            } else {
+                format!("Could not update the hosts file: {e}")
             }
-            return Err(format!("Could not update the hosts file: {}", err.trim()));
-        }
+        })?;
         let after = std::fs::read_to_string(&path).unwrap_or_default();
         if !hosts_has(&after, name, ip) {
             return Err("The hosts file was not updated (permission denied?). Phones can still use the IP link.".into());
