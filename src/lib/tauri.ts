@@ -7,6 +7,8 @@ export interface NetInterface {
   isLoopback: boolean;
   isHotspot: boolean;
   score: number;
+  /** Windows adapter GUID (lowercase, no braces); null elsewhere. */
+  adapterId: string | null;
 }
 
 export interface ServerStatus {
@@ -35,6 +37,8 @@ export interface Settings {
   maxUploadMb: number;
   inboxQuotaMb: number;
   inboxDir: string | null;
+  /** Adapter id of the connection shared with the hotspot; null = automatic. */
+  upstreamAdapter: string | null;
 }
 
 export interface UploadItem {

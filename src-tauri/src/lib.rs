@@ -134,7 +134,11 @@ async fn set_settings(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, sett
     if let Some(d) = &inbox_dir {
         std::fs::create_dir_all(d).map_err(|e| format!("Inbox folder is not usable: {e}"))?;
     }
-    let next = Settings { name, suffix, upload_pin, max_upload_mb, inbox_quota_mb, inbox_dir: inbox_dir.clone(), ..settings };
+    let upstream_adapter = match settings.upstream_adapter.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(id) => Some(ics::norm_guid(id).ok_or_else(|| "Pick a connection from the list.".to_string())?),
+        None => None,
+    };
+    let next = Settings { name, suffix, upload_pin, max_upload_mb, inbox_quota_mb, inbox_dir: inbox_dir.clone(), upstream_adapter, ..settings };
     next.save(&config_dir(&app)?)?;
     engine.uploads().set_inbox_dir(inbox_dir.map(std::path::PathBuf::from).unwrap_or_else(|| default_inbox_dir(&app)));
     let _ = engine.uploads().ensure_dirs();
@@ -235,9 +239,10 @@ async fn get_hotspot_info() -> HotspotInfo {
 }
 
 #[tauri::command]
-async fn set_hotspot(app: AppHandle, on: bool) -> Result<HotspotInfo, String> {
+async fn set_hotspot(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, on: bool) -> Result<HotspotInfo, String> {
     http::emit_log(&app, "info", "server", if on { "Turning on Mobile Hotspot…" } else { "Turning off Mobile Hotspot…" });
-    let info = tauri::async_runtime::spawn_blocking(move || hotspot::set_enabled(on)).await.map_err(|e| e.to_string())??;
+    let preferred = engine.settings().upstream_adapter;
+    let info = tauri::async_runtime::spawn_blocking(move || hotspot::set_enabled(on, preferred.as_deref())).await.map_err(|e| e.to_string())??;
     http::emit_log(&app, "success", "server", format!("Hotspot {} ({})", info.state, info.ssid.clone().unwrap_or_default()));
     Ok(info)
 }
@@ -274,7 +279,8 @@ async fn auto_share(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, ip: Op
     let mut hotspot_started = false;
     if info.supported && info.state != "on" {
         http::emit_log(&app, "info", "server", "Turning on Mobile Hotspot…");
-        info = tauri::async_runtime::spawn_blocking(|| hotspot::set_enabled(true)).await.map_err(|e| e.to_string())??;
+        let preferred = engine.settings().upstream_adapter;
+        info = tauri::async_runtime::spawn_blocking(move || hotspot::set_enabled(true, preferred.as_deref())).await.map_err(|e| e.to_string())??;
         hotspot_started = true;
         http::emit_log(&app, "success", "server", format!("Hotspot \"{}\" is on", info.ssid.clone().unwrap_or_default()));
     }
@@ -319,7 +325,7 @@ async fn stop_share(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, turn_o
     let status = engine.stop(app.clone()).await;
     let hotspot = if turn_off_hotspot {
         http::emit_log(&app, "info", "server", "Turning off Mobile Hotspot…");
-        match tauri::async_runtime::spawn_blocking(|| hotspot::set_enabled(false)).await.map_err(|e| e.to_string())? {
+        match tauri::async_runtime::spawn_blocking(|| hotspot::set_enabled(false, None)).await.map_err(|e| e.to_string())? {
             Ok(i) => i,
             Err(e) => {
                 http::emit_log(&app, "warn", "server", format!("Could not turn off the hotspot: {e}"));

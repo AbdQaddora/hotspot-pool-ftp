@@ -61,6 +61,19 @@ pub fn norm_guid(s: &str) -> Option<String> {
     Some(g)
 }
 
+/// GUID from its parts, in the normalized form.
+pub fn guid_parts_string(d1: u32, d2: u16, d3: u16, d4: [u8; 8]) -> String {
+    format!(
+        "{:08x}-{:04x}-{:04x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        d1, d2, d3, d4[0], d4[1], d4[2], d4[3], d4[4], d4[5], d4[6], d4[7]
+    )
+}
+
+#[cfg(windows)]
+pub fn guid_string(g: &windows::core::GUID) -> String {
+    guid_parts_string(g.data1, g.data2, g.data3, g.data4)
+}
+
 fn braced_upper(norm: &str) -> String {
     format!("{{{}}}", norm.to_ascii_uppercase())
 }
@@ -150,6 +163,70 @@ pub fn apply_script(public: &str, private: &str) -> Result<String, String> {
     ))
 }
 
+// ------------------------------------------------------------ live queries
+
+/// Connections the laptop could share, in Windows's order.
+pub fn list_upstreams() -> Vec<Upstream> {
+    #[cfg(windows)]
+    {
+        use windows::Networking::Connectivity::{NetworkConnectivityLevel, NetworkInformation};
+        let default_id = NetworkInformation::GetInternetConnectionProfile()
+            .ok()
+            .and_then(|p| p.NetworkAdapter().ok())
+            .and_then(|a| a.NetworkAdapterId().ok())
+            .map(|g| guid_string(&g));
+        let Ok(profiles) = NetworkInformation::GetConnectionProfiles() else { return vec![] };
+        let mut out = Vec::new();
+        for p in profiles {
+            let Ok(adapter) = p.NetworkAdapter() else { continue };
+            let Ok(id) = adapter.NetworkAdapterId().map(|g| guid_string(&g)) else { continue };
+            let kind = match adapter.IanaInterfaceType().unwrap_or(0) {
+                6 => "ethernet",
+                71 => "wifi",
+                243 | 244 => "cellular",
+                _ => "other",
+            };
+            let connectivity = match p.GetNetworkConnectivityLevel() {
+                Ok(NetworkConnectivityLevel::InternetAccess) => "internet",
+                Ok(NetworkConnectivityLevel::ConstrainedInternetAccess) => "signin",
+                Ok(NetworkConnectivityLevel::LocalAccess) => "local",
+                _ => "none",
+            };
+            let name = p.ProfileName().map(|s| s.to_string()).unwrap_or_default();
+            let is_default = default_id.as_deref() == Some(id.as_str());
+            if out.iter().any(|u: &Upstream| u.id == id) {
+                continue;
+            }
+            out.push(Upstream { id, name: if name.is_empty() { kind.to_string() } else { name }, kind, connectivity, is_default });
+        }
+        out
+    }
+    #[cfg(not(windows))]
+    {
+        vec![]
+    }
+}
+
+/// Current ICS pairing as Windows reports it (hidden PowerShell, no UAC).
+pub fn sharing_state() -> SharingState {
+    match crate::elevate::run_hidden(read_script()) {
+        Ok(out) => parse_sharing_json(&out),
+        Err(e) => SharingState::unavailable(if e.is_empty() { "Windows did not report the sharing state".to_string() } else { e }),
+    }
+}
+
+/// Point ICS from `public` to `private` (one UAC prompt).
+pub fn apply_sharing(public: &str, private: &str) -> Result<(), String> {
+    let script = apply_script(public, private)?;
+    crate::elevate::run_elevated("apply-ics.ps1", &script).map_err(|e| {
+        if e.contains("cancelled") {
+            "Windows needs permission to change Internet Connection Sharing. The prompt was cancelled.".to_string()
+        } else {
+            format!("Could not set up Internet Connection Sharing: {e}")
+        }
+    })
+}
+
 /// Health of internet sharing for the devices. Exact strings are part of the
 /// UI contract: sharing | not_shared | wrong_upstream | signin | no_internet |
 /// hotspot_off | unknown.
@@ -198,6 +275,11 @@ mod tests {
         assert_eq!(norm_guid(A).as_deref(), Some(A));
         assert_eq!(norm_guid("nope"), None);
         assert_eq!(norm_guid("abcdef01-1234-5678-9abc-def01234567g"), None);
+    }
+
+    #[test]
+    fn guid_parts_string_formats_lowercase() {
+        assert_eq!(guid_parts_string(0xabcdef01, 0x1234, 0x5678, [0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78]), A);
     }
 
     #[test]

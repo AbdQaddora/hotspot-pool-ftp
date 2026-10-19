@@ -27,11 +27,14 @@ pub struct Settings {
     pub inbox_quota_mb: u64,
     /// Inbox folder override; None = app data dir.
     pub inbox_dir: Option<String>,
+    /// Adapter GUID (lowercase, no braces) of the connection to share with
+    /// the hotspot; None = whatever Windows treats as the internet connection.
+    pub upstream_adapter: Option<String>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { name: "share".into(), suffix: DEFAULT_SUFFIX.into(), auto_hotspot: true, allow_uploads: true, upload_pin: String::new(), max_upload_mb: 4096, inbox_quota_mb: 20_480, inbox_dir: None }
+        Settings { name: "share".into(), suffix: DEFAULT_SUFFIX.into(), auto_hotspot: true, allow_uploads: true, upload_pin: String::new(), max_upload_mb: 4096, inbox_quota_mb: 20_480, inbox_dir: None, upstream_adapter: None }
     }
 }
 
@@ -100,6 +103,18 @@ mod tests {
         assert_eq!(s.full_name(), "abdu.link");
         assert_eq!(Settings::validate_suffix(".Site ").unwrap(), "site");
         assert!(Settings::validate_suffix("x").is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn upstream_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("hpf-upstream-{}", std::process::id()));
+        let s = Settings { upstream_adapter: Some("abcdef01-1234-5678-9abc-def012345678".into()), ..Settings::default() };
+        s.save(&dir).unwrap();
+        assert_eq!(Settings::load(&dir), s);
+        // Settings written by an older version have no field: automatic.
+        std::fs::write(dir.join("settings.json"), br#"{"name":"abdu"}"#).unwrap();
+        assert_eq!(Settings::load(&dir).upstream_adapter, None);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

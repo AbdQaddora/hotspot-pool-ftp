@@ -22,6 +22,8 @@ pub struct NetInterface {
     pub is_hotspot: bool,
     /// 0..=100 confidence that this adapter is the hotspot gateway.
     pub score: u8,
+    /// Windows adapter GUID (lowercase, no braces); None on other OSes.
+    pub adapter_id: Option<String>,
 }
 
 const KNOWN_HOTSPOT_IPS: [Ipv4Addr; 3] = [
@@ -62,12 +64,17 @@ pub fn list_interfaces() -> Vec<NetInterface> {
         .filter_map(|iface| match iface.addr {
             if_addrs::IfAddr::V4(v4) => {
                 let score = score_interface(&iface.name, v4.ip);
+                #[cfg(windows)]
+                let adapter_id = crate::ics::norm_guid(&iface.adapter_name);
+                #[cfg(not(windows))]
+                let adapter_id = None;
                 Some(NetInterface {
                     name: iface.name,
                     ip: v4.ip.to_string(),
                     is_loopback: v4.ip.is_loopback(),
                     is_hotspot: score >= 60,
                     score,
+                    adapter_id,
                 })
             }
             _ => None,

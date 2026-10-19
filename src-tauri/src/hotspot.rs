@@ -29,6 +29,14 @@ impl HotspotInfo {
     }
 }
 
+/// A device joined to the hotspot.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct HotspotClient {
+    pub mac: String,
+    pub name: Option<String>,
+}
+
 /// Wi-Fi join string for QR codes (ZXing format understood by iOS/Android cameras).
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn wifi_qr(ssid: &str, passphrase: Option<&str>) -> String {
@@ -55,7 +63,19 @@ mod imp {
         }
     }
 
-    fn pick_profile() -> Result<ConnectionProfile, String> {
+    /// The connection the hotspot shares: the preferred adapter when it is
+    /// connected, otherwise what Windows calls the internet connection.
+    fn pick_profile(preferred: Option<&str>) -> Result<ConnectionProfile, String> {
+        if let Some(want) = preferred {
+            if let Ok(profiles) = NetworkInformation::GetConnectionProfiles() {
+                for p in profiles {
+                    let id = p.NetworkAdapter().ok().and_then(|a| a.NetworkAdapterId().ok()).map(|g| crate::ics::guid_string(&g));
+                    if id.as_deref() == Some(want) {
+                        return Ok(p);
+                    }
+                }
+            }
+        }
         if let Ok(p) = NetworkInformation::GetInternetConnectionProfile() {
             return Ok(p);
         }
@@ -73,8 +93,12 @@ mod imp {
     }
 
     fn manager() -> Result<NetworkOperatorTetheringManager, String> {
+        manager_for(None)
+    }
+
+    fn manager_for(preferred: Option<&str>) -> Result<NetworkOperatorTetheringManager, String> {
         init_apartment();
-        let profile = pick_profile()?;
+        let profile = pick_profile(preferred)?;
         NetworkOperatorTetheringManager::CreateFromConnectionProfile(&profile)
             .map_err(|e| format!("Mobile hotspot is not available on this adapter ({})", e.message()))
     }
@@ -101,8 +125,26 @@ mod imp {
         }
     }
 
-    pub fn set_enabled(on: bool) -> Result<HotspotInfo, String> {
-        let mgr = manager()?;
+    pub fn clients() -> Vec<super::HotspotClient> {
+        let Ok(mgr) = manager() else { return vec![] };
+        let Ok(list) = mgr.GetTetheringClients() else { return vec![] };
+        list.into_iter()
+            .map(|c| {
+                let mac = c.MacAddress().map(|s| s.to_string()).unwrap_or_default();
+                let name = c
+                    .HostNames()
+                    .ok()
+                    .and_then(|h| h.into_iter().next())
+                    .and_then(|h| h.DisplayName().ok())
+                    .map(|s| s.to_string())
+                    .filter(|s| !s.is_empty());
+                super::HotspotClient { mac, name }
+            })
+            .collect()
+    }
+
+    pub fn set_enabled(on: bool, preferred: Option<&str>) -> Result<HotspotInfo, String> {
+        let mgr = manager_for(preferred)?;
         let current = mgr.TetheringOperationalState().map_err(|e| e.message().to_string())?;
         if (on && current == TetheringOperationalState::On) || (!on && current == TetheringOperationalState::Off) {
             return Ok(describe(&mgr));
@@ -148,8 +190,11 @@ mod imp {
     pub fn info() -> HotspotInfo {
         HotspotInfo::unsupported(REASON)
     }
-    pub fn set_enabled(_on: bool) -> Result<HotspotInfo, String> {
+    pub fn set_enabled(_on: bool, _preferred: Option<&str>) -> Result<HotspotInfo, String> {
         Err(REASON.to_string())
+    }
+    pub fn clients() -> Vec<super::HotspotClient> {
+        vec![]
     }
     pub fn configure(_ssid: &str, _passphrase: &str) -> Result<HotspotInfo, String> {
         Err(REASON.to_string())
@@ -160,8 +205,11 @@ mod imp {
 pub fn info() -> HotspotInfo {
     imp::info()
 }
-pub fn set_enabled(on: bool) -> Result<HotspotInfo, String> {
-    imp::set_enabled(on)
+pub fn set_enabled(on: bool, preferred: Option<&str>) -> Result<HotspotInfo, String> {
+    imp::set_enabled(on, preferred)
+}
+pub fn clients() -> Vec<HotspotClient> {
+    imp::clients()
 }
 pub fn configure(ssid: &str, passphrase: &str) -> Result<HotspotInfo, String> {
     imp::configure(ssid, passphrase)
@@ -194,6 +242,7 @@ mod tests {
         let i = info();
         assert!(!i.supported);
         assert_eq!(i.state, "unsupported");
-        assert!(set_enabled(true).is_err());
+        assert!(set_enabled(true, None).is_err());
+        assert!(clients().is_empty());
     }
 }
