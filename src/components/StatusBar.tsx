@@ -33,6 +33,7 @@ export function StatusBar({ status, totalSize, pending, itemCount, logs }: Props
         <span className="flex items-center gap-1.5">
           <Network className="size-3" />
           HTTP <span className={cn("font-mono", status.running ? "text-live" : "text-foreground")}>{status.port ?? DEFAULT_PORT}</span>
+          {status.httpsPort && <span className="font-mono text-muted-foreground">· HTTPS {status.httpsPort}</span>}
         </span>
         <span className="flex items-center gap-1.5">
           <Database className="size-3" />

@@ -25,10 +25,12 @@ Built with **Tauri v2 + Rust** (backend) and **React + Tailwind CSS v4 + shadcn-
 
 1. Add files or folders with the buttons or by dragging them onto the window.
 2. Flip the **Server** switch. The app turns on *Mobile hotspot* through the Windows tethering API (no admin needed), waits for the `192.168.137.1` adapter and starts the HTTP server on port `8080` (falls back to `8081`).
-3. On the phone, scan QR **1** with the camera to join the hotspot Wi-Fi, then QR **2** to open the page. No typing.
+3. On the phone, scan QR **1** with the camera to join the hotspot Wi-Fi, then QR **2** to open the page, or just type the share name, e.g. `https://abdu.pool`. No IP addresses.
 4. Flip the switch off and the app stops sharing and turns the hotspot off again (if it was the one that turned it on). Untick *Manage the hotspot with the Server switch* to leave the hotspot alone.
 
-The hotspot name and password are shown in the sidebar and can be edited there. Windows only starts a hotspot when the laptop has a connection to share (Wi-Fi or Ethernet); otherwise the app explains what to do.
+The hotspot name and password are shown in the sidebar and can be edited there.
+
+**Share name (`<name>.pool`).** Pick the label in the sidebar (default `share`). On a Windows hotspot the ICS DNS proxy resolves through the laptop's own resolver, so the app adds `192.168.137.1 <name>.pool` to the Windows hosts file (one UAC prompt, only when the name changes) and then verifies with a real DNS query to the gateway before showing the name as the main link. HTTPS is served on 443 (8443 fallback) with a self-signed certificate kept in the app config folder, so phones only see the "not private" warning once per device; untick *Use https://* to show the plain `http://` link instead. HTTP listens on 80 (8080/8081 fallback). Windows only starts a hotspot when the laptop has a connection to share (Wi-Fi or Ethernet); otherwise the app explains what to do.
 
 **macOS / Linux:** hotspot control is manual. Turn on *Internet Sharing* (macOS) or a NetworkManager *Hotspot* (Linux), then flip the switch; the app finds the gateway (`192.168.2.1` / `10.42.0.1`) and starts the server. The *Open hotspot settings* button jumps to the right settings pane.
 

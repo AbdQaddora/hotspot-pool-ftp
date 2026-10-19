@@ -13,7 +13,23 @@ export interface ServerStatus {
   running: boolean;
   ip: string | null;
   port: number | null;
+  /** http://<ip>[:port] */
   url: string | null;
+  httpsPort: number | null;
+  /** Full share name, e.g. "abdu.pool". */
+  name: string | null;
+  /** Preferred-scheme link for the name, e.g. "https://abdu.pool". */
+  nameUrl: string | null;
+  /** null = not checked yet. */
+  nameResolves: boolean | null;
+  /** http://<laptop-hostname>[:port] when the hotspot DNS resolves it. */
+  hostnameUrl: string | null;
+}
+
+export interface Settings {
+  name: string;
+  preferHttps: boolean;
+  autoHotspot: boolean;
 }
 
 export interface PoolItem {
@@ -64,6 +80,10 @@ export interface ShareResult {
 }
 
 export const api = {
+  getSettings: () => invoke<Settings>("get_settings"),
+  setSettings: (settings: Settings) => invoke<Settings>("set_settings", { settings }),
+  setupName: () => invoke<ServerStatus>("setup_name"),
+  checkName: () => invoke<ServerStatus>("check_name"),
   getHotspotInfo: () => invoke<HotspotInfo>("get_hotspot_info"),
   setHotspot: (on: boolean) => invoke<HotspotInfo>("set_hotspot", { on }),
   configureHotspot: (ssid: string, passphrase: string) => invoke<HotspotInfo>("configure_hotspot", { ssid, passphrase }),
@@ -87,12 +107,12 @@ export const events = {
   onPool: (cb: (e: PoolItem[]) => void): Promise<UnlistenFn> => listen<PoolItem[]>("pool_changed", (ev) => cb(ev.payload)),
 };
 
-export const DEFAULT_PORT = 8080;
+export const DEFAULT_PORT = 80;
 
 /** Base URL phones open, using the live server or the adapter that would be used. */
 export function shareUrl(status: ServerStatus, fallbackIp: string | null): string | null {
   if (status.url) return status.url;
-  return fallbackIp ? `http://${fallbackIp}:${DEFAULT_PORT}` : null;
+  return fallbackIp ? `http://${fallbackIp}` : null;
 }
 
 /** Wi-Fi join payload for QR codes (understood by iOS and Android cameras). */

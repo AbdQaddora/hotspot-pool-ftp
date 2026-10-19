@@ -32,8 +32,11 @@ export default function App() {
             }}
             hotspot={server.hotspot}
             busy={server.busy}
-            autoHotspot={server.autoHotspot}
-            onAutoHotspot={server.setAutoHotspot}
+            settings={server.settings}
+            onSaveSettings={server.saveSettings}
+            onSetupName={server.setupName}
+            onCheckName={server.checkName}
+            nameBusy={server.nameBusy}
             onToggleHotspot={server.toggleHotspot}
             onConfigureHotspot={server.configureHotspot}
             onOpenHotspotSettings={server.openHotspotSettings}

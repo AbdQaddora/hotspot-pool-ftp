@@ -1,12 +1,16 @@
 mod hotspot;
 mod http;
+mod names;
 mod network;
 mod pool;
+mod settings;
+mod tls;
 mod vpath;
 
 use hotspot::HotspotInfo;
 use http::{ServerEngine, ServerStatus};
 use serde::Serialize;
+use settings::Settings;
 use std::time::Duration;
 use network::NetInterface;
 use pool::{PoolItem, PoolState};
@@ -93,6 +97,44 @@ fn remove_path_from_pool(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, i
 }
 
 #[tauri::command]
+fn get_settings(engine: State<'_, Arc<ServerEngine>>) -> Settings {
+    engine.settings()
+}
+
+/// Save settings. When the share name changes while sharing, re-run the name setup.
+#[tauri::command]
+async fn set_settings(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, settings: Settings) -> Result<Settings, String> {
+    let name = Settings::validate_label(&settings.name)?;
+    let next = Settings { name, ..settings };
+    next.save(&config_dir(&app)?)?;
+    let name_changed = engine.set_settings(next.clone());
+    if engine.status().running {
+        if name_changed {
+            if let Err(e) = engine.setup_name(&app).await {
+                http::emit_log(&app, "warn", "server", e);
+            }
+        } else {
+            let _ = app.emit(http::EV_STATUS, engine.status());
+        }
+    }
+    Ok(next)
+}
+
+#[tauri::command]
+async fn setup_name(app: AppHandle, engine: State<'_, Arc<ServerEngine>>) -> Result<ServerStatus, String> {
+    engine.setup_name(&app).await
+}
+
+#[tauri::command]
+async fn check_name(app: AppHandle, engine: State<'_, Arc<ServerEngine>>) -> Result<ServerStatus, String> {
+    Ok(engine.verify_name(&app).await)
+}
+
+fn config_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    app.path().app_config_dir().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn get_hotspot_info() -> HotspotInfo {
     tauri::async_runtime::spawn_blocking(hotspot::info).await.unwrap_or_else(|e| HotspotInfo::unsupported(e.to_string()))
 }
@@ -163,7 +205,16 @@ async fn auto_share(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, ip: Op
             found
         }
     };
-    let status = engine.start(app.clone(), bind_ip, None).await?;
+    engine.start(app.clone(), bind_ip, None).await?;
+    // Friendly name: hosts-file entry (UAC on Windows) + verification against the hotspot DNS.
+    let status = if cfg!(windows) {
+        match engine.setup_name(&app).await {
+            Ok(s) => s,
+            Err(_) => engine.status(),
+        }
+    } else {
+        engine.verify_name(&app).await
+    };
     Ok(ShareResult { hotspot: info, status, hotspot_started })
 }
 
@@ -188,12 +239,16 @@ async fn stop_share(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, turn_o
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let engine = Arc::new(ServerEngine::new(Arc::new(PoolState::default())));
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .manage(engine)
+        .setup(|app| {
+            let dir = app.path().app_config_dir().unwrap_or_else(|_| std::env::temp_dir().join("hotspot-pool"));
+            let settings = Settings::load(&dir);
+            app.manage(Arc::new(ServerEngine::new(Arc::new(PoolState::default()), dir, settings)));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_network_interfaces,
             get_hotspot_interface,
@@ -209,6 +264,10 @@ pub fn run() {
             hotspot_settings_url,
             auto_share,
             stop_share,
+            get_settings,
+            set_settings,
+            setup_name,
+            check_name,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

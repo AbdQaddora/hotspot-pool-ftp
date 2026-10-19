@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { api, events, type HotspotInfo, type ServerStatus, type LogEvent, type NetInterface, type StatsEvent } from "@/lib/tauri";
+import { api, events, type HotspotInfo, type ServerStatus, type Settings, type LogEvent, type NetInterface, type StatsEvent } from "@/lib/tauri";
 
 const MAX_LOG = 400;
 const SPARK_POINTS = 60;
@@ -8,7 +8,9 @@ const SPARK_POINTS = 60;
 const idleStats: StatsEvent = { speedBps: 0, peakBps: 0, connected: 0, activeTransfers: 0, totalBytes: 0 };
 
 export function useServer() {
-  const [status, setStatus] = useState<ServerStatus>({ running: false, ip: null, port: null, url: null });
+  const [status, setStatus] = useState<ServerStatus>({ running: false, ip: null, port: null, url: null, httpsPort: null, name: null, nameUrl: null, nameResolves: null, hostnameUrl: null });
+  const [settings, setSettingsState] = useState<Settings>({ name: "share", preferHttps: true, autoHotspot: true });
+  const [nameBusy, setNameBusy] = useState(false);
   const [stats, setStats] = useState<StatsEvent>(idleStats);
   const [history, setHistory] = useState<number[]>(() => Array(SPARK_POINTS).fill(0));
   const [logs, setLogs] = useState<LogEvent[]>([]);
@@ -18,10 +20,9 @@ export function useServer() {
   const [phase, setPhase] = useState<"idle" | "hotspot" | "server" | "stopping">("idle");
   const [error, setError] = useState<string | null>(null);
   const [hotspot, setHotspot] = useState<HotspotInfo>({ supported: false, state: "unknown", ssid: null, passphrase: null, clientCount: null, wifiQr: null, error: null });
-  const [autoHotspot, setAutoHotspot] = useState(true);
   const [hotspotStartedByUs, setHotspotStartedByUs] = useState(false);
   const autoRef = useRef(true);
-  autoRef.current = autoHotspot;
+  autoRef.current = settings.autoHotspot;
   const startedRef = useRef(false);
   startedRef.current = hotspotStartedByUs;
   const selectedRef = useRef<string | null>(null);
@@ -47,6 +48,12 @@ export function useServer() {
     const unsubs: Array<() => void> = [];
     (async () => {
       await Promise.all([refreshInterfaces(), refreshHotspot()]);
+      try {
+        const st = await api.getSettings();
+        if (alive) setSettingsState(st);
+      } catch {
+        /* ignore */
+      }
       const s = await api.getServerStatus();
       if (alive) setStatus(s);
       unsubs.push(
@@ -149,6 +156,42 @@ export function useServer() {
     }
   }, []);
 
+  const saveSettings = useCallback(async (next: Settings) => {
+    setError(null);
+    try {
+      const saved = await api.setSettings(next);
+      setSettingsState(saved);
+      setStatus(await api.getServerStatus());
+      return true;
+    } catch (e) {
+      fail(e);
+      return false;
+    }
+  }, []);
+
+  const setupName = useCallback(async () => {
+    setNameBusy(true);
+    setError(null);
+    try {
+      setStatus(await api.setupName());
+    } catch (e) {
+      fail(e);
+    } finally {
+      setNameBusy(false);
+    }
+  }, []);
+
+  const checkName = useCallback(async () => {
+    setNameBusy(true);
+    try {
+      setStatus(await api.checkName());
+    } catch (e) {
+      fail(e);
+    } finally {
+      setNameBusy(false);
+    }
+  }, []);
+
   const openHotspotSettings = useCallback(async () => {
     const url = await api.hotspotSettingsUrl();
     if (url) await openUrl(url);
@@ -158,7 +201,8 @@ export function useServer() {
 
   return {
     status, stats, history, logs, interfaces, selectedIp, setSelectedIp, busy, phase, error, start, stop, toggle, refreshInterfaces,
-    hotspot, autoHotspot, setAutoHotspot, toggleHotspot, configureHotspot, openHotspotSettings, refreshHotspot,
+    hotspot, toggleHotspot, configureHotspot, openHotspotSettings, refreshHotspot,
+    settings, saveSettings, setupName, checkName, nameBusy,
     clearLogs: () => setLogs([]), dismissError: () => setError(null),
   };
 }

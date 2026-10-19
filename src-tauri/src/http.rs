@@ -3,7 +3,10 @@
 //! telemetry + log events to the desktop UI.
 
 use crate::{
+    names,
     pool::PoolState,
+    settings::Settings,
+    tls,
     vpath::{self, Entry, Resolved},
 };
 use axum::{
@@ -19,6 +22,7 @@ use std::{
     collections::HashMap,
     io,
     net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::PathBuf,
     pin::Pin,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -34,7 +38,8 @@ use tokio::{
 };
 use tokio_util::io::ReaderStream;
 
-pub const PREFERRED_PORTS: [u16; 2] = [8080, 8081];
+pub const PREFERRED_PORTS: [u16; 3] = [80, 8080, 8081];
+pub const PREFERRED_TLS_PORTS: [u16; 2] = [443, 8443];
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(500);
 const CLIENT_TTL: Duration = Duration::from_secs(45);
 const WEB_PAGE: &str = include_str!("../web/index.html");
@@ -49,21 +54,32 @@ pub struct ServerStatus {
     pub running: bool,
     pub ip: Option<String>,
     pub port: Option<u16>,
+    /// `http://<ip>[:port]`
     pub url: Option<String>,
+    pub https_port: Option<u16>,
+    /// Full share name, e.g. `abdu.pool`.
+    pub name: Option<String>,
+    /// Preferred-scheme link for the name, e.g. `https://abdu.pool`.
+    pub name_url: Option<String>,
+    /// `None` until verified against the hotspot DNS.
+    pub name_resolves: Option<bool>,
+    /// `http://<laptop-hostname>[:port]` when the hotspot DNS resolves it.
+    pub hostname_url: Option<String>,
 }
 
-impl ServerStatus {
-    fn stopped() -> Self {
-        ServerStatus { running: false, ip: None, port: None, url: None }
+fn url_for(scheme: &str, host: &str, port: u16) -> String {
+    let default = if scheme == "https" { 443 } else { 80 };
+    if port == default {
+        format!("{scheme}://{host}")
+    } else {
+        format!("{scheme}://{host}:{port}")
     }
-    fn running(addr: SocketAddr) -> Self {
-        ServerStatus {
-            running: true,
-            ip: Some(addr.ip().to_string()),
-            port: Some(addr.port()),
-            url: Some(format!("http://{}:{}", addr.ip(), addr.port())),
-        }
-    }
+}
+
+#[derive(Debug, Default, Clone)]
+struct NameState {
+    resolves: Option<bool>,
+    hostname_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -348,7 +364,9 @@ impl<R> Drop for CountingReader<R> {
 
 struct Running {
     addr: SocketAddr,
+    https_addr: Option<SocketAddr>,
     shutdown: Option<oneshot::Sender<()>>,
+    https_handle: Option<axum_server::Handle>,
     telemetry_task: tauri::async_runtime::JoinHandle<()>,
 }
 
@@ -356,22 +374,131 @@ pub struct ServerEngine {
     pool: Arc<PoolState>,
     telemetry: Arc<Telemetry>,
     running: Mutex<Option<Running>>,
+    settings: Mutex<Settings>,
+    name_state: Mutex<NameState>,
+    config_dir: PathBuf,
 }
 
 impl ServerEngine {
-    pub fn new(pool: Arc<PoolState>) -> Self {
-        ServerEngine { pool, telemetry: Arc::new(Telemetry::default()), running: Mutex::new(None) }
+    pub fn new(pool: Arc<PoolState>, config_dir: PathBuf, settings: Settings) -> Self {
+        ServerEngine {
+            pool,
+            telemetry: Arc::new(Telemetry::default()),
+            running: Mutex::new(None),
+            settings: Mutex::new(settings),
+            name_state: Mutex::new(NameState::default()),
+            config_dir,
+        }
     }
 
     pub fn pool(&self) -> &Arc<PoolState> {
         &self.pool
     }
 
-    pub fn status(&self) -> ServerStatus {
-        match self.running.lock().expect("server lock").as_ref() {
-            Some(r) => ServerStatus::running(r.addr),
-            None => ServerStatus::stopped(),
+    pub fn settings(&self) -> Settings {
+        self.settings.lock().expect("settings lock").clone()
+    }
+
+    /// Store new settings; returns true when the share name changed.
+    pub fn set_settings(&self, s: Settings) -> bool {
+        let mut cur = self.settings.lock().expect("settings lock");
+        let changed = cur.full_name() != s.full_name();
+        *cur = s;
+        if changed {
+            *self.name_state.lock().expect("name lock") = NameState::default();
         }
+        changed
+    }
+
+    pub fn status(&self) -> ServerStatus {
+        let settings = self.settings();
+        let ns = self.name_state.lock().expect("name lock").clone();
+        let name = settings.full_name();
+        match self.running.lock().expect("server lock").as_ref() {
+            Some(r) => {
+                let https_port = r.https_addr.map(|a| a.port());
+                let name_url = match (settings.prefer_https, https_port) {
+                    (true, Some(p)) => url_for("https", &name, p),
+                    _ => url_for("http", &name, r.addr.port()),
+                };
+                ServerStatus {
+                    running: true,
+                    ip: Some(r.addr.ip().to_string()),
+                    port: Some(r.addr.port()),
+                    url: Some(url_for("http", &r.addr.ip().to_string(), r.addr.port())),
+                    https_port,
+                    name: Some(name),
+                    name_url: Some(name_url),
+                    name_resolves: ns.resolves,
+                    hostname_url: ns.hostname_url,
+                }
+            }
+            None => ServerStatus {
+                running: false,
+                ip: None,
+                port: None,
+                url: None,
+                https_port: None,
+                name: Some(name),
+                name_url: None,
+                name_resolves: None,
+                hostname_url: None,
+            },
+        }
+    }
+
+    fn emit_status<R: Runtime>(&self, app: &AppHandle<R>) -> ServerStatus {
+        let st = self.status();
+        let _ = app.emit(EV_STATUS, st.clone());
+        st
+    }
+
+    fn running_ip(&self) -> Option<(Ipv4Addr, u16)> {
+        self.running.lock().expect("server lock").as_ref().and_then(|r| match r.addr.ip() {
+            IpAddr::V4(ip) => Some((ip, r.addr.port())),
+            _ => None,
+        })
+    }
+
+    /// Ask the hotspot gateway DNS whether the share name (and the laptop's
+    /// hostname) resolve to us. Updates and emits the status.
+    pub async fn verify_name<R: Runtime>(&self, app: &AppHandle<R>) -> ServerStatus {
+        let Some((ip, port)) = self.running_ip() else { return self.emit_status(app) };
+        let name = self.settings().full_name();
+        let resolves = names::resolve_via(IpAddr::V4(ip), &name).await == Some(ip);
+        let hostname_url = match names::hostname() {
+            Some(h) if names::resolve_via(IpAddr::V4(ip), &h).await == Some(ip) => Some(url_for("http", &h, port)),
+            _ => None,
+        };
+        {
+            let mut ns = self.name_state.lock().expect("name lock");
+            ns.resolves = Some(resolves);
+            ns.hostname_url = hostname_url;
+        }
+        if resolves {
+            emit_log(app, "success", "server", format!("{name} resolves to {ip} on the hotspot"));
+        } else {
+            emit_log(app, "warn", "server", format!("{name} does not resolve on the hotspot yet; phones can use the IP link"));
+        }
+        self.emit_status(app)
+    }
+
+    /// Put the share name into the hosts file (UAC on Windows), then verify.
+    pub async fn setup_name<R: Runtime>(&self, app: &AppHandle<R>) -> Result<ServerStatus, String> {
+        let Some((ip, _)) = self.running_ip() else { return Err("Start sharing first.".into()) };
+        let name = self.settings().full_name();
+        let n = name.clone();
+        let result = tauri::async_runtime::spawn_blocking(move || names::ensure_hosts_entry(&n, ip)).await.map_err(|e| e.to_string())?;
+        match result {
+            Ok(true) => emit_log(app, "success", "server", format!("Added {name} → {ip} to the hosts file")),
+            Ok(false) => {}
+            Err(e) => {
+                emit_log(app, "warn", "server", e.clone());
+                self.verify_name(app).await;
+                return Err(e);
+            }
+        }
+        Ok(self.verify_name(app).await)
     }
 
     pub fn router<R: Runtime>(app: AppHandle<R>, pool: Arc<PoolState>, telemetry: Arc<Telemetry>) -> Router {
@@ -382,10 +509,9 @@ impl ServerEngine {
             .with_state(Ctx { app, pool, telemetry })
     }
 
-    async fn bind(ip: IpAddr, explicit: Option<u16>) -> Result<tokio::net::TcpListener, String> {
-        let candidates: Vec<u16> = explicit.map(|p| vec![p]).unwrap_or_else(|| PREFERRED_PORTS.to_vec());
+    async fn bind(ip: IpAddr, candidates: &[u16]) -> Result<tokio::net::TcpListener, String> {
         let mut last = String::new();
-        for port in candidates {
+        for &port in candidates {
             match tokio::net::TcpListener::bind(SocketAddr::new(ip, port)).await {
                 Ok(l) => return Ok(l),
                 Err(e) => last = format!("port {port}: {e}"),
@@ -404,24 +530,73 @@ impl ServerEngine {
                 .and_then(|i| i.ip.parse().ok())
                 .ok_or_else(|| "No hotspot network interface detected. Turn on your Mobile Hotspot and try again.".to_string())?,
         };
-        let listener = Self::bind(IpAddr::V4(ip), port).await?;
+        let http_ports: Vec<u16> = port.map(|p| vec![p]).unwrap_or_else(|| PREFERRED_PORTS.to_vec());
+        let listener = Self::bind(IpAddr::V4(ip), &http_ports).await?;
         let addr = listener.local_addr().map_err(|e| e.to_string())?;
         self.telemetry.reset();
+        *self.name_state.lock().expect("name lock") = NameState::default();
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
         let router = Self::router(app.clone(), self.pool.clone(), self.telemetry.clone());
         let app_for_server = app.clone();
+        let http_router = router.clone();
         tauri::async_runtime::spawn(async move {
-            let res = axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
+            let res = axum::serve(listener, http_router.into_make_service_with_connect_info::<SocketAddr>())
                 .with_graceful_shutdown(async move {
                     let _ = shutdown_rx.await;
                 })
                 .await;
             if let Err(e) = res {
                 emit_log(&app_for_server, "error", "error", format!("HTTP server stopped unexpectedly: {e}"));
-                let _ = app_for_server.emit(EV_STATUS, ServerStatus::stopped());
             }
         });
+
+        // HTTPS (self-signed) on 443 / 8443, best effort.
+        let settings = self.settings();
+        let mut tls_names = vec![settings.full_name()];
+        if let Some(h) = names::hostname() {
+            tls_names.push(h);
+        }
+        let (https_addr, https_handle) = match Self::bind(IpAddr::V4(ip), &PREFERRED_TLS_PORTS).await {
+            Ok(tls_listener) => {
+                let tls_addr = tls_listener.local_addr().ok();
+                let dir = self.config_dir.clone();
+                let material = tauri::async_runtime::spawn_blocking(move || tls::load_or_create(&dir, &tls_names, ip)).await.map_err(|e| e.to_string())?;
+                match material {
+                    Ok(m) => match axum_server::tls_rustls::RustlsConfig::from_pem(m.cert_pem.into_bytes(), m.key_pem.into_bytes()).await {
+                        Ok(cfg) => match tls_listener.into_std() {
+                            Ok(std_listener) => {
+                                let handle = axum_server::Handle::new();
+                                let h2 = handle.clone();
+                                let app_for_tls = app.clone();
+                                tauri::async_runtime::spawn(async move {
+                                    if let Err(e) = axum_server::from_tcp_rustls(std_listener, cfg).handle(h2).serve(router.into_make_service_with_connect_info::<SocketAddr>()).await {
+                                        emit_log(&app_for_tls, "warn", "server", format!("HTTPS listener stopped: {e}"));
+                                    }
+                                });
+                                (tls_addr, Some(handle))
+                            }
+                            Err(e) => {
+                                emit_log(&app, "warn", "server", format!("HTTPS disabled: {e}"));
+                                (None, None)
+                            }
+                        },
+                        Err(e) => {
+                            emit_log(&app, "warn", "server", format!("HTTPS disabled (certificate): {e}"));
+                            (None, None)
+                        }
+                    },
+                    Err(e) => {
+                        emit_log(&app, "warn", "server", format!("HTTPS disabled (certificate): {e}"));
+                        (None, None)
+                    }
+                }
+            }
+            Err(e) => {
+                emit_log(&app, "warn", "server", format!("HTTPS disabled: {e}"));
+                (None, None)
+            }
+        };
 
         let telemetry = self.telemetry.clone();
         let app_for_stats = app.clone();
@@ -449,9 +624,12 @@ impl ServerEngine {
             }
         });
 
-        *self.running.lock().expect("server lock") = Some(Running { addr, shutdown: Some(shutdown_tx), telemetry_task });
-        let status = ServerStatus::running(addr);
+        *self.running.lock().expect("server lock") = Some(Running { addr, https_addr, shutdown: Some(shutdown_tx), https_handle, telemetry_task });
+        let status = self.status();
         emit_log(&app, "success", "server", format!("Sharing at {}", status.url.clone().unwrap_or_default()));
+        if let Some(p) = status.https_port {
+            emit_log(&app, "info", "server", format!("HTTPS on port {p} (self-signed certificate)"));
+        }
         let _ = app.emit(EV_STATUS, status.clone());
         Ok(status)
     }
@@ -461,13 +639,15 @@ impl ServerEngine {
             if let Some(tx) = r.shutdown.take() {
                 let _ = tx.send(());
             }
+            if let Some(h) = r.https_handle.take() {
+                h.graceful_shutdown(Some(Duration::from_secs(1)));
+            }
             r.telemetry_task.abort();
             let _ = app.emit(EV_STATS, StatsEvent { speed_bps: 0.0, peak_bps: 0.0, connected: 0, active_transfers: 0, total_bytes: self.telemetry.total_bytes.load(Ordering::Relaxed) });
             emit_log(&app, "info", "server", "Server stopped");
         }
-        let status = ServerStatus::stopped();
-        let _ = app.emit(EV_STATUS, status.clone());
-        status
+        *self.name_state.lock().expect("name lock") = NameState::default();
+        self.emit_status(&app)
     }
 }
 

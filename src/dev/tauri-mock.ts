@@ -33,7 +33,12 @@ const ifaces = [
   { name: "Loopback Pseudo-Interface 1", ip: "127.0.0.1", isLoopback: true, isHotspot: false, score: 0 },
 ];
 
-const ftpStatus = () => (running ? { running: true, ip: "192.168.137.1", port: 8080, url: "http://192.168.137.1:8080" } : { running: false, ip: null, port: null, url: null });
+let settings = { name: "abdu", preferHttps: true, autoHotspot: true };
+let nameResolves: boolean | null = null;
+const ftpStatus = () =>
+  running
+    ? { running: true, ip: "192.168.137.1", port: 80, url: "http://192.168.137.1", httpsPort: 443, name: `${settings.name}.pool`, nameUrl: `${settings.preferHttps ? "https" : "http"}://${settings.name}.pool`, nameResolves, hostnameUrl: nameResolves ? "http://abd-laptop" : null }
+    : { running: false, ip: null, port: null, url: null, httpsPort: null, name: `${settings.name}.pool`, nameUrl: null, nameResolves: null, hostnameUrl: null };
 const log = (level: string, kind: string, message: string, extra: Record<string, unknown> = {}) =>
   emit("server_log", { ts: Date.now(), level, kind, message, client: null, path: null, bytes: null, ...extra });
 
@@ -80,6 +85,18 @@ async function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<
       return ifaces;
     case "get_hotspot_interface":
       return ifaces[0];
+    case "get_settings":
+      return settings;
+    case "set_settings":
+      settings = { ...settings, ...(args.settings as object) };
+      return settings;
+    case "setup_name":
+      await new Promise((r) => setTimeout(r, 400));
+      nameResolves = true;
+      log("success", "server", `${settings.name}.pool resolves on the hotspot`);
+      return ftpStatus();
+    case "check_name":
+      return ftpStatus();
     case "get_hotspot_info":
       return hotspotInfo();
     case "set_hotspot":
@@ -95,6 +112,7 @@ async function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<
       hotspotOn = true;
       await new Promise((r) => setTimeout(r, 300));
       startSim();
+      nameResolves = true;
       emit("server_status", ftpStatus());
       return { hotspot: hotspotInfo(), status: ftpStatus(), hotspotStarted: started };
     }

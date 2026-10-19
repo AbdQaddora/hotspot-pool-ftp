@@ -1,14 +1,14 @@
 import { QRCodeSVG } from "qrcode.react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Check, Copy, ExternalLink, Eye, EyeOff, Gauge, Pencil, Power, RefreshCw, Settings2, Smartphone, Wifi, WifiOff } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle2, Copy, ExternalLink, Eye, EyeOff, Gauge, Globe, Loader2, Pencil, Power, RefreshCw, Settings2, Smartphone, Wifi, WifiOff } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Sparkline } from "@/components/Sparkline";
 import { formatBytes, formatSpeed } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { DEFAULT_PORT, shareUrl, wifiQr, type HotspotInfo, type ServerStatus, type NetInterface, type StatsEvent } from "@/lib/tauri";
+import { DEFAULT_PORT, shareUrl, wifiQr, type HotspotInfo, type ServerStatus, type Settings, type NetInterface, type StatsEvent } from "@/lib/tauri";
 
 interface Props {
   status: ServerStatus;
@@ -20,8 +20,11 @@ interface Props {
   onRefresh: () => void;
   hotspot: HotspotInfo;
   busy: boolean;
-  autoHotspot: boolean;
-  onAutoHotspot: (v: boolean) => void;
+  settings: Settings;
+  onSaveSettings: (s: Settings) => Promise<boolean>;
+  onSetupName: () => void;
+  onCheckName: () => void;
+  nameBusy: boolean;
   onToggleHotspot: () => void;
   onConfigureHotspot: (ssid: string, passphrase: string) => Promise<boolean>;
   onOpenHotspotSettings: () => void;
@@ -113,8 +116,70 @@ function HotspotCredentials({ hotspot, onConfigure, disabled }: { hotspot: Hotsp
   );
 }
 
-export function Sidebar({ status, stats, history, interfaces, selectedIp, onSelectIp, onRefresh, hotspot, busy, autoHotspot, onAutoHotspot, onToggleHotspot, onConfigureHotspot, onOpenHotspotSettings }: Props) {
+function ShareNameCard({ status, settings, onSave, onSetup, onCheck, nameBusy, busy }: { status: ServerStatus; settings: Settings; onSave: Props["onSaveSettings"]; onSetup: () => void; onCheck: () => void; nameBusy: boolean; busy: boolean }) {
+  const [label, setLabel] = useState(settings.name);
+  useEffect(() => setLabel(settings.name), [settings.name]);
+  const dirty = label.trim().toLowerCase() !== settings.name;
+  const link = status.nameUrl ?? `${settings.preferHttps ? "https" : "http"}://${label.trim().toLowerCase() || "name"}.pool`;
+  const state = !status.running ? "idle" : nameBusy ? "checking" : status.nameResolves === true ? "ok" : status.nameResolves === false ? "bad" : "unknown";
+  return (
+    <div className="space-y-2">
+      <form
+        className="flex items-center gap-1"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          if (await onSave({ ...settings, name: label.trim().toLowerCase() })) setLabel(label.trim().toLowerCase());
+        }}
+      >
+        <div className="flex h-7 min-w-0 flex-1 items-center rounded-md border border-border bg-background pr-2 focus-within:ring-1 focus-within:ring-ring">
+          <span className="shrink-0 pl-2 font-mono text-[11px] text-muted-foreground">{settings.preferHttps ? "https://" : "http://"}</span>
+          <input size={1} className="w-full min-w-0 flex-1 bg-transparent px-0.5 font-mono text-[12px] outline-none" value={label} onChange={(e) => setLabel(e.target.value)} maxLength={32} spellCheck={false} aria-label="Share name" />
+          <span className="shrink-0 font-mono text-[11px] text-muted-foreground">.pool</span>
+        </div>
+        <Button type="submit" size="sm" className="shrink-0" variant={dirty ? "default" : "outline"} disabled={!dirty || busy}>
+          Save
+        </Button>
+      </form>
+      <div className={cn("flex items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 font-mono text-[12.5px]", state === "ok" ? "border-live/40 glow-live text-live" : "border-border text-foreground")}>
+        <span className="truncate" title={link}>{link}</span>
+        <span className="flex items-center gap-0.5">
+          {state === "ok" && <CheckCircle2 className="size-3.5 text-live" />}
+          {state === "bad" && <AlertTriangle className="size-3.5 text-warn" />}
+          {state === "checking" && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
+          <CopyBtn value={status.running ? link : null} label="Copy link" />
+          <Button variant="ghost" size="xs" onClick={() => openUrl(link)} disabled={!status.running} aria-label="Open link">
+            <ExternalLink />
+          </Button>
+        </span>
+      </div>
+      {state === "ok" && <p className="text-[11px] leading-snug text-muted-foreground">Phones on the hotspot can open this name. {settings.preferHttps && "The first visit shows a certificate warning: tap Advanced → Proceed (or Show details → Visit on iPhone)."}</p>}
+      {state === "bad" && (
+        <div className="space-y-1.5">
+          <p className="text-[11px] leading-snug text-warn">The hotspot DNS does not answer this name yet. Phones can use the IP link{status.hostnameUrl ? ` or ${status.hostnameUrl}` : ""}.</p>
+          <div className="flex gap-1.5">
+            <Button size="sm" variant="outline" className="flex-1" onClick={onSetup} disabled={nameBusy}>
+              <Settings2 /> Set up name (admin)
+            </Button>
+            <Button size="sm" variant="ghost" onClick={onCheck} disabled={nameBusy} aria-label="Check again">
+              <RefreshCw />
+            </Button>
+          </div>
+        </div>
+      )}
+      {state === "idle" && <p className="text-[11px] leading-snug text-muted-foreground">Start sharing to activate the name. Windows asks for permission once to add it to the hosts file.</p>}
+      <label className="flex cursor-pointer items-center gap-2 text-[11.5px] text-muted-foreground">
+        <input type="checkbox" className="accent-[var(--live)]" checked={settings.preferHttps} onChange={(e) => onSave({ ...settings, preferHttps: e.target.checked })} disabled={busy} />
+        Use https:// for the link (self-signed, shows a one-time warning)
+      </label>
+    </div>
+  );
+}
+
+export function Sidebar({ status, stats, history, interfaces, selectedIp, onSelectIp, onRefresh, hotspot, busy, settings, onSaveSettings, onSetupName, onCheckName, nameBusy, onToggleHotspot, onConfigureHotspot, onOpenHotspotSettings }: Props) {
   const [qrTab, setQrTab] = useState<"wifi" | "page">("wifi");
+  const autoHotspot = settings.autoHotspot;
+  const onAutoHotspot = (v: boolean) => onSaveSettings({ ...settings, autoHotspot: v });
+  const pageUrl = status.running && status.nameResolves ? status.nameUrl : null;
   const active = interfaces.find((i) => i.ip === (status.running ? status.ip : selectedIp));
   const displayIp = status.running ? status.ip : selectedIp;
   const displayPort = status.port ?? DEFAULT_PORT;
@@ -181,7 +246,7 @@ export function Sidebar({ status, stats, history, interfaces, selectedIp, onSele
             <div className={cn("flex items-center justify-between rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[12.5px]", status.running && "border-live/40 glow-live")}>
               <span className={cn(status.running ? "text-live" : "text-foreground")}>
                 {displayIp ?? "—"}
-                <span className="text-muted-foreground">:{displayPort}</span>
+                {displayPort !== 80 && <span className="text-muted-foreground">:{displayPort}</span>}
               </span>
               <CopyBtn value={url} label="Copy address" />
             </div>
@@ -203,6 +268,10 @@ export function Sidebar({ status, stats, history, interfaces, selectedIp, onSele
         </div>
       </Section>
 
+      <Section title="Share name" icon={<Globe />}>
+        <ShareNameCard status={status} settings={settings} onSave={onSaveSettings} onSetup={onSetupName} onCheck={onCheckName} nameBusy={nameBusy} busy={busy} />
+      </Section>
+
       <Section title="Scan with phone" icon={<Smartphone />}>
         <div className="flex flex-col items-center gap-2">
           {canJoinQr && (
@@ -215,7 +284,7 @@ export function Sidebar({ status, stats, history, interfaces, selectedIp, onSele
             </div>
           )}
           <div className={cn("rounded-md border border-border bg-background p-2.5 transition-opacity", tab === "page" && !status.running && "opacity-40", tab === "wifi" && !hotspotOn && "opacity-40")}>
-            <QRCodeSVG value={tab === "wifi" && hotspot.ssid ? (hotspot.wifiQr ?? wifiQr(hotspot.ssid, hotspot.passphrase)) : (url ?? "http://0.0.0.0:8080")} size={124} bgColor="transparent" fgColor="#fafafa" level="M" />
+            <QRCodeSVG value={tab === "wifi" && hotspot.ssid ? (hotspot.wifiQr ?? wifiQr(hotspot.ssid, hotspot.passphrase)) : (pageUrl ?? url ?? "http://0.0.0.0:8080")} size={124} bgColor="transparent" fgColor="#fafafa" level="M" />
           </div>
           {tab === "wifi" ? (
             <p className="text-center text-[11px] leading-snug text-muted-foreground">
@@ -224,11 +293,11 @@ export function Sidebar({ status, stats, history, interfaces, selectedIp, onSele
             </p>
           ) : (
             <>
-              <code className="w-full truncate text-center font-mono text-[10.5px] text-muted-foreground" title={url ?? ""}>
-                {url ?? "server offline"}
+              <code className="w-full truncate text-center font-mono text-[10.5px] text-muted-foreground" title={pageUrl ?? url ?? ""}>
+                {pageUrl ?? url ?? "server offline"}
               </code>
               {status.running ? (
-                <Button variant="outline" size="sm" className="w-full" onClick={() => url && openUrl(url)}>
+                <Button variant="outline" size="sm" className="w-full" onClick={() => openUrl(pageUrl ?? url ?? "")}>
                   <ExternalLink /> Open in browser
                 </Button>
               ) : (
