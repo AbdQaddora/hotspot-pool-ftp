@@ -34,6 +34,18 @@ The hotspot name and password are shown in Settings and can be edited there.
 
 **Share name (`<name>.<ending>`).** Pick the label and ending in the sidebar (default `share.link`). The ending must be a **real top-level domain** (`link`, `site`, `net`, …): phone browsers only open typed text as an address when it ends in one they know, otherwise they search the web for it. On a Windows hotspot the ICS DNS proxy resolves through the laptop's own resolver, so the app adds `192.168.137.1 <name>.<ending>` to the Windows hosts file (one UAC prompt, only when the name changes) and verifies with a real DNS query to the gateway before showing the name as the main link. The server is plain HTTP on port 80 (8080/8081 fallback); there is deliberately no HTTPS, since a self-signed certificate would make every phone show a warning.
 
+## Share Wi-Fi (internet for devices)
+
+The **Share Wi-Fi** tab gives every device on the hotspot the laptop's internet, the way MyPublicWiFi's *Internet Connection Sharing* mode does. It is for networks that only admit one device, such as a captive portal with a voucher login: the laptop signs in, and the phones behind its hotspot ride on that login because they appear to the network as the laptop.
+
+- **Hotspot switch** on its own, no file server needed.
+- **Internet to share**: pick the laptop connection (default *Automatic*, the one Windows treats as the internet connection). The choice is saved and the hotspot is created from that connection.
+- **Health line**: *Devices get the laptop's internet* when Windows Internet Connection Sharing (ICS) runs from the chosen connection to the hotspot adapter. Otherwise it says what is wrong: not shared, sharing the wrong connection, *Sign in on the laptop first* (captive portal detected, with a button that opens the sign-in page), or no internet on the laptop.
+- **Fix sharing (admin)**: one UAC prompt. Clears any old ICS pairing and sets the chosen connection as the shared one and the hotspot adapter as the private side, which is the manual fix for the usual "connected, no internet" hotspot.
+- **Connected devices**: name and MAC of everything on the hotspot.
+
+The sharing state is read through `HNetCfg.HNetShare` in a hidden PowerShell (no admin); only *Fix sharing* needs elevation. Windows only.
+
 **macOS / Linux:** hotspot control is manual. Turn on *Internet Sharing* (macOS) or a NetworkManager *Hotspot* (Linux), then flip the switch; the app finds the gateway (`192.168.2.1` / `10.42.0.1`) and starts the server. The *Open hotspot settings* button jumps to the right settings pane.
 
 The phone sees one unified listing regardless of which drive each item lives on. Folders can be browsed and **any single file inside can be downloaded**; images, video, audio and PDFs can be previewed in place (video streams with HTTP range support). The share is **read-only**.
