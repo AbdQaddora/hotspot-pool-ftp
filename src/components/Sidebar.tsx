@@ -27,7 +27,7 @@ function Section({ title, icon, children, right }: { title: string; icon: React.
         <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{title}</span>
         <span className="ml-auto">{right}</span>
       </header>
-      <div className="p-3">{children}</div>
+      <div className="p-2.5">{children}</div>
     </section>
   );
 }
@@ -47,7 +47,7 @@ export function Sidebar({ status, stats, history, interfaces, selectedIp, onSele
   };
 
   return (
-    <aside className="flex w-[272px] shrink-0 flex-col gap-3 overflow-y-auto border-r border-border bg-background p-3">
+    <aside className="flex w-[272px] shrink-0 flex-col gap-2.5 overflow-y-auto border-r border-border bg-background p-2.5">
       <Section
         title="Hotspot adapter"
         icon={active?.isHotspot ? <Wifi /> : <WifiOff />}
@@ -98,7 +98,7 @@ export function Sidebar({ status, stats, history, interfaces, selectedIp, onSele
       <Section title="Scan to connect" icon={<Smartphone />}>
         <div className="flex flex-col items-center gap-2.5">
           <div className={cn("rounded-md border border-border bg-background p-2.5 transition-opacity", !status.running && "opacity-40")}>
-            <QRCodeSVG value={url ?? "ftp://0.0.0.0:2121/Pool"} size={148} bgColor="transparent" fgColor="#fafafa" level="M" />
+            <QRCodeSVG value={url ?? "ftp://0.0.0.0:2121/Pool"} size={124} bgColor="transparent" fgColor="#fafafa" level="M" />
           </div>
           <code className="w-full truncate text-center font-mono text-[10.5px] text-muted-foreground" title={url ?? ""}>
             {url ?? "server offline"}
