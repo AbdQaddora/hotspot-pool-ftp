@@ -17,11 +17,21 @@ pub struct Settings {
     pub suffix: String,
     /// Let the Server switch turn the hotspot on/off (Windows).
     pub auto_hotspot: bool,
+    /// Accept uploads from phones (into the quarantine inbox).
+    pub allow_uploads: bool,
+    /// Optional PIN phones must send with uploads. Empty = no PIN.
+    pub upload_pin: String,
+    /// Largest single upload, in MB.
+    pub max_upload_mb: u64,
+    /// Total quarantine size allowed, in MB.
+    pub inbox_quota_mb: u64,
+    /// Inbox folder override; None = app data dir.
+    pub inbox_dir: Option<String>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { name: "share".into(), suffix: DEFAULT_SUFFIX.into(), auto_hotspot: true }
+        Settings { name: "share".into(), suffix: DEFAULT_SUFFIX.into(), auto_hotspot: true, allow_uploads: true, upload_pin: String::new(), max_upload_mb: 4096, inbox_quota_mb: 20_480, inbox_dir: None }
     }
 }
 
@@ -84,7 +94,7 @@ mod tests {
     #[test]
     fn roundtrip() {
         let dir = std::env::temp_dir().join(format!("hpf-settings-{}", std::process::id()));
-        let s = Settings { name: "abdu".into(), suffix: "link".into(), auto_hotspot: true };
+        let s = Settings { name: "abdu".into(), suffix: "link".into(), ..Settings::default() };
         s.save(&dir).unwrap();
         assert_eq!(Settings::load(&dir), s);
         assert_eq!(s.full_name(), "abdu.link");

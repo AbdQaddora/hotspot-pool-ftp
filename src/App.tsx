@@ -7,6 +7,8 @@ import { StatusBar } from "@/components/StatusBar";
 import { ShareTab } from "@/components/tabs/ShareTab";
 import { ActivityTab } from "@/components/tabs/ActivityTab";
 import { SettingsTab } from "@/components/tabs/SettingsTab";
+import { InboxTab } from "@/components/tabs/InboxTab";
+import { useUploads } from "@/hooks/useUploads";
 import { useServer } from "@/hooks/useServer";
 import { usePool } from "@/hooks/usePool";
 import { useDragDrop } from "@/hooks/useDragDrop";
@@ -14,9 +16,10 @@ import { useDragDrop } from "@/hooks/useDragDrop";
 export default function App() {
   const server = useServer();
   const pool = usePool();
+  const uploads = useUploads();
   const [tab, setTab] = useState<Tab>(() => {
     const t = new URLSearchParams(window.location.search).get("tab");
-    return t === "pool" || t === "activity" || t === "settings" ? t : "share";
+    return t === "pool" || t === "activity" || t === "settings" || t === "inbox" ? t : "share";
   });
   const onDrop = useCallback(
     (paths: string[]) => {
@@ -26,10 +29,11 @@ export default function App() {
     [pool.addPaths],
   );
   const dragging = useDragDrop(onDrop);
-  const error = pool.error ?? server.error;
+  const error = pool.error ?? server.error ?? uploads.error;
   const dismiss = () => {
     pool.dismissError();
     server.dismissError();
+    uploads.dismissError();
   };
 
   return (
@@ -37,7 +41,7 @@ export default function App() {
       <div className="flex h-full flex-col overflow-hidden rounded-[10px] border border-border bg-background">
         <TopBar status={server.status} busy={server.busy} phase={server.phase} onToggle={server.toggle} />
         <div className="flex min-h-0 flex-1">
-          <Nav tab={tab} onTab={setTab} status={server.status} stats={server.stats} poolCount={pool.items.length} />
+          <Nav tab={tab} onTab={setTab} status={server.status} stats={server.stats} poolCount={pool.items.length} inboxCount={uploads.items.length} />
           <div className="relative min-w-0 flex-1 overflow-hidden">
             {tab === "pool" ? (
               <PoolManager items={pool.items} status={server.status} dragging={dragging} error={error} onAddFiles={pool.addFiles} onAddFolders={pool.addFolders} onRemove={pool.remove} onDismissError={dismiss} />
@@ -63,6 +67,9 @@ export default function App() {
                     onGoSettings={() => setTab("settings")}
                   />
                 )}
+                {tab === "inbox" && (
+                  <InboxTab items={uploads.items} info={uploads.info} busy={uploads.busy} settings={server.settings} onApprove={uploads.approve} onReject={uploads.reject} onApproveAll={uploads.approveAll} onRejectAll={uploads.rejectAll} onGoSettings={() => setTab("settings")} />
+                )}
                 {tab === "activity" && <ActivityTab status={server.status} stats={server.stats} history={server.history} logs={server.logs} onClear={server.clearLogs} />}
                 {tab === "settings" && (
                   <SettingsTab
@@ -84,6 +91,7 @@ export default function App() {
                       server.refreshInterfaces();
                       server.refreshHotspot();
                     }}
+                    inbox={uploads.info}
                   />
                 )}
               </div>

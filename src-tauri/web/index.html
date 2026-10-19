@@ -104,6 +104,28 @@
   .state{font-size:11px;text-transform:uppercase;letter-spacing:.05em;padding:2px 7px;border-radius:6px;border:1px solid var(--border);color:var(--muted)}
   .state.downloading{color:var(--live);border-color:rgba(16,185,129,.3)}.state.done{color:var(--live);border-color:rgba(16,185,129,.3);background:var(--live-dim)}.state.paused{color:var(--warn);border-color:rgba(245,158,11,.3)}.state.error{color:var(--red);border-color:rgba(239,68,68,.3)}.state.queued{color:var(--dim)}
   .hint{font-size:12px;color:var(--dim);padding:4px 6px 0;line-height:1.45}
+  .tabbar{grid-template-columns:1fr 1fr 1fr}
+  .upbox{margin:8px 6px 12px;border:2px dashed var(--border);border-radius:var(--radius);padding:22px 16px;text-align:center;background:var(--card)}
+  .upbox b{display:block;font-size:15px;margin-bottom:4px}
+  .upbox p{margin:0 0 12px;color:var(--dim);font-size:12.5px}
+  .upbox.off{opacity:.6}
+  .primary{display:inline-flex;align-items:center;gap:8px;height:44px;padding:0 18px;border-radius:12px;background:var(--live);color:#06281c;font-weight:650;font-size:15px}
+  .primary:active{transform:scale(.97)}
+  .primary[disabled]{opacity:.5;pointer-events:none}
+  .field{display:flex;align-items:center;gap:8px;margin:0 6px 10px}
+  .field label{color:var(--dim);font-size:12.5px;flex:none}
+  .field input{flex:1;height:38px;border-radius:10px;border:1px solid var(--border);background:var(--card);color:var(--fg);padding:0 12px;font-size:14px;outline:none;min-width:0}
+  .field input:focus{border-color:#3f3f46}
+  .pinbox{position:fixed;inset:0;z-index:25;background:rgba(0,0,0,.7);display:none;align-items:flex-end;justify-content:center}
+  .pinbox.on{display:flex}
+  .sheet{width:100%;max-width:520px;background:#121214;border:1px solid var(--border);border-radius:18px 18px 0 0;padding:18px 16px calc(18px + var(--safe-b))}
+  .sheet h3{margin:0 0 4px;font-size:17px}
+  .sheet p{margin:0 0 12px;color:var(--muted);font-size:13px}
+  .sheet input{width:100%;height:46px;border-radius:12px;border:1px solid var(--border);background:var(--card);color:var(--fg);padding:0 14px;font-size:18px;letter-spacing:.2em;text-align:center;outline:none;margin-bottom:12px}
+  .sheet .btns{display:flex;gap:8px}
+  .sheet .btns button{flex:1;height:44px;border-radius:12px;border:1px solid var(--border);font-size:15px}
+  .sheet .btns .go{background:var(--live);color:#06281c;border-color:transparent;font-weight:650}
+  .state.uploading{color:var(--live);border-color:rgba(16,185,129,.3)}.state.pending{color:var(--warn);border-color:rgba(245,158,11,.3)}
   @media (min-width:720px){main{max-width:820px;width:100%;margin:0 auto}.bar,.search,.crumbs{max-width:820px;margin-left:auto;margin-right:auto}.search{margin:0 auto 10px;padding:0 16px}.search svg{left:28px}.search .clr{right:22px}.tabbar{max-width:820px;margin:0 auto;border-left:1px solid var(--border);border-right:1px solid var(--border)}}
 </style>
 </head>
@@ -132,6 +154,13 @@
     <div id="list" class="list"></div>
     <footer>Files are served from the host laptop over the hotspot. Nothing leaves the network.</footer>
   </section>
+  <section class="page" id="page-upload">
+    <div class="dlhead"><h2>Send to laptop</h2><div class="acts"><button class="pill" id="upclear">Clear finished</button></div></div>
+    <div class="field"><label for="devname">Your name</label><input id="devname" placeholder="e.g. Abd's phone" maxlength="40" autocomplete="nickname"></div>
+    <div class="upbox" id="upbox"><b id="uptitle">Pick files to send</b><p id="upsub">They go to the laptop's inbox and are shared with everyone once its owner approves them.</p><button class="primary" id="pick"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21V9"/><path d="m7 14 5-5 5 5"/><path d="M5 3h14"/></svg>Choose files</button><input id="filepick" type="file" multiple hidden></div>
+    <div id="uplist" class="list"></div>
+    <p class="hint">Keep this tab open while sending. Uploads are limited by the laptop's settings (size and total space).</p>
+  </section>
   <section class="page" id="page-downloads">
     <div class="dlhead"><h2>Downloads</h2><div class="acts"><button class="pill" id="pauseall">Pause all</button><button class="pill" id="cleardone">Clear finished</button></div></div>
     <div id="dllist" class="list"></div>
@@ -141,7 +170,9 @@
 <nav class="tabbar">
   <button class="tab on" data-tab="files"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Files</button>
   <button class="tab" data-tab="downloads"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>Downloads<span class="n" id="dlbadge"></span></button>
+  <button class="tab" data-tab="upload"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21V9"/><path d="m7 14 5-5 5 5"/><path d="M5 3h14"/></svg>Upload<span class="n" id="upbadge"></span></button>
 </nav>
+<div class="pinbox" id="pinbox"><div class="sheet"><h3>Upload PIN</h3><p>The laptop asks for a PIN before accepting files. Ask its owner.</p><input id="pin" inputmode="numeric" autocomplete="one-time-code" placeholder="••••"><div class="btns"><button id="pincancel">Cancel</button><button class="go" id="pingo">Continue</button></div></div></div>
 <div class="viewer" id="viewer">
   <div class="vbar"><button class="btn" id="vclose" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button><div class="name" id="vname"></div><a class="btn dl" id="vdl" download aria-label="Download with the browser"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg></a></div>
   <div class="vbody" id="vbody"></div>
@@ -288,6 +319,95 @@
   async function clearDone() { for (const j of [...jobs.values()]) if (j.state === 'done' || j.state === 'error' || j.state === 'cancelled') await cancel(j.id); }
   const activeCount = () => [...jobs.values()].filter((j) => j.state === 'downloading' || j.state === 'queued' || j.state === 'paused' || (j.state === 'done' && !j.saved)).length;
 
+  /* ------------------------------------------------------------------ uploads */
+  const uplist = $('#uplist'), upbadge = $('#upbadge'), devname = $('#devname'), pinbox = $('#pinbox'), pinInput = $('#pin');
+  const ups = [];            // {id, file, name, size, sent, state, speed, eta, error, xhr, samples}
+  let upInfo = null, upPin = sessionStorage.getItem('hp-upload-pin') || '';
+  try { devname.value = localStorage.getItem('hp-device-name') || ''; } catch {}
+  devname.addEventListener('change', () => { try { localStorage.setItem('hp-device-name', devname.value.trim()); } catch {} });
+  async function loadUpInfo() {
+    try { const r = await fetch('/api/upload-info', { cache: 'no-store' }); upInfo = await r.json(); } catch { upInfo = null; }
+    const box = $('#upbox');
+    if (upInfo && !upInfo.allowed) { box.classList.add('off'); $('#uptitle').textContent = 'Uploads are turned off'; $('#upsub').textContent = 'The laptop owner has disabled receiving files.'; $('#pick').disabled = true; }
+    else { box.classList.remove('off'); $('#uptitle').textContent = 'Pick files to send'; $('#upsub').textContent = (upInfo ? `Up to ${fmt(upInfo.maxBytes)} per file. ` : '') + 'Files go to the laptop\'s inbox and are shared once its owner approves them.'; $('#pick').disabled = false; }
+  }
+  function askPin() {
+    return new Promise((res) => {
+      pinInput.value = ''; pinbox.classList.add('on'); setTimeout(() => pinInput.focus(), 50);
+      const done = (v) => { pinbox.classList.remove('on'); $('#pingo').onclick = null; $('#pincancel').onclick = null; res(v); };
+      $('#pingo').onclick = () => done(pinInput.value.trim());
+      $('#pincancel').onclick = () => done(null);
+      pinInput.onkeydown = (e) => { if (e.key === 'Enter') done(pinInput.value.trim()); };
+    });
+  }
+  async function queueUploads(files) {
+    if (!files.length) return;
+    for (const f of files) ups.unshift({ id: 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), file: f, name: f.name, size: f.size, sent: 0, state: 'queued', speed: 0, eta: Infinity, error: null, xhr: null, samples: [] });
+    renderUploads(); go('upload'); pumpUploads();
+  }
+  let uploading = false;
+  async function pumpUploads() {
+    if (uploading) return;
+    const next = [...ups].reverse().find((u) => u.state === 'queued');
+    if (!next) return;
+    uploading = true;
+    try { await sendOne(next); } finally { uploading = false; pumpUploads(); }
+  }
+  function sendOne(u) {
+    return new Promise((resolve) => {
+      if (upInfo && upInfo.maxBytes && u.size > upInfo.maxBytes) { u.state = 'error'; u.error = `Too big (limit ${fmt(upInfo.maxBytes)})`; renderUploads(); return resolve(); }
+      const xhr = new XMLHttpRequest(); u.xhr = xhr; u.state = 'uploading'; u.samples = []; renderUploads();
+      xhr.open('POST', '/api/upload', true);
+      xhr.setRequestHeader('X-File-Name', encodeURIComponent(u.name));
+      xhr.setRequestHeader('X-Device-Name', encodeURIComponent(devname.value.trim()));
+      if (upPin) xhr.setRequestHeader('X-Upload-Pin', encodeURIComponent(upPin));
+      xhr.upload.onprogress = (e) => {
+        u.sent = e.loaded; const now = Date.now(); u.samples.push([now, e.loaded]); while (u.samples.length && now - u.samples[0][0] > 3000) u.samples.shift();
+        if (u.samples.length > 1) { const [t0, b0] = u.samples[0]; u.speed = (e.loaded - b0) / ((now - t0) / 1000); u.eta = u.speed > 0 ? (u.size - e.loaded) / u.speed : Infinity; }
+        renderUpProgress(u);
+      };
+      xhr.onload = async () => {
+        let body = {}; try { body = JSON.parse(xhr.responseText || '{}'); } catch {}
+        if (xhr.status === 200) { u.state = 'pending'; u.sent = u.size; u.speed = 0; say(u.name + ' sent · waiting for approval', true); }
+        else if (xhr.status === 401 && body.pinRequired) {
+          const pin = await askPin();
+          if (pin) { upPin = pin; sessionStorage.setItem('hp-upload-pin', pin); u.state = 'queued'; u.sent = 0; renderUploads(); return resolve(); }
+          u.state = 'error'; u.error = 'PIN required';
+        }
+        else { u.state = 'error'; u.error = body.error || ('Failed (' + xhr.status + ')'); if (xhr.status === 401) { upPin = ''; sessionStorage.removeItem('hp-upload-pin'); } }
+        u.xhr = null; renderUploads(); resolve();
+      };
+      xhr.onerror = () => { u.state = 'error'; u.error = 'Connection lost'; u.xhr = null; renderUploads(); resolve(); };
+      xhr.onabort = () => { u.state = 'cancelled'; u.xhr = null; renderUploads(); resolve(); };
+      xhr.send(u.file);
+    });
+  }
+  function cancelUpload(id) { const u = ups.find((x) => x.id === id); if (!u) return; if (u.xhr) u.xhr.abort(); else { u.state = 'cancelled'; } renderUploads(); }
+  function removeUpload(id) { const i = ups.findIndex((x) => x.id === id); if (i >= 0) ups.splice(i, 1); renderUploads(); }
+  function retryUpload(id) { const u = ups.find((x) => x.id === id); if (!u) return; u.state = 'queued'; u.sent = 0; u.error = null; renderUploads(); pumpUploads(); }
+  function upProgressHtml(u) {
+    const pct = u.size ? Math.min(100, (u.sent / u.size) * 100) : 0;
+    const cls = u.state === 'pending' ? 'done' : u.state === 'error' || u.state === 'cancelled' ? 'error' : '';
+    const right = u.state === 'uploading' ? `<b>${fmtSpeed(u.speed)}</b> · ${fmtEta(u.eta)} left` : u.state === 'queued' ? 'Waiting…' : u.state === 'pending' ? 'On the laptop · awaiting approval' : u.state === 'cancelled' ? 'Cancelled' : esc(u.error || '');
+    return `<div class="prog" data-uprog="${u.id}"><div class="track"><div class="fill ${cls}" style="width:${pct.toFixed(1)}%"></div></div><div class="pstat"><span>${fmt(u.sent)} / ${fmt(u.size)} · <b>${pct.toFixed(0)}%</b></span><span>${right}</span></div></div>`;
+  }
+  function renderUpProgress(u) { document.querySelectorAll(`[data-uprog="${u.id}"]`).forEach((el) => { el.outerHTML = upProgressHtml(u); }); }
+  function renderUploads() {
+    const n = ups.filter((u) => u.state === 'uploading' || u.state === 'queued').length;
+    upbadge.textContent = n; upbadge.classList.toggle('on', n > 0);
+    if (!ups.length) { uplist.innerHTML = ''; return; }
+    uplist.innerHTML = ups.map((u) => {
+      const k = kind({ name: u.name, isDir: false });
+      const acts = u.state === 'uploading' || u.state === 'queued' ? `<button class="btn danger" data-upcancel="${u.id}" aria-label="Cancel">${I.x}</button>`
+        : u.state === 'error' || u.state === 'cancelled' ? `<button class="btn dl" data-upretry="${u.id}" aria-label="Retry">${I.retry}</button><button class="btn" data-upremove="${u.id}" aria-label="Remove">${I.trash}</button>`
+        : `<span class="btn ok">${I.check}</span><button class="btn" data-upremove="${u.id}" aria-label="Remove">${I.trash}</button>`;
+      return `<div class="row dlrow"><div class="rowmain"><div class="ico ${k}">${I[k]}</div><div class="info"><div class="name">${esc(u.name)}</div><div class="det"><span class="state ${u.state}">${u.state === 'pending' ? 'sent' : u.state}</span></div></div><div class="act">${acts}</div></div>${upProgressHtml(u)}</div>`;
+    }).join('');
+  }
+  $('#pick').onclick = () => $('#filepick').click();
+  $('#filepick').addEventListener('change', (e) => { queueUploads([...e.target.files]); e.target.value = ''; });
+  $('#upclear').onclick = () => { for (let i = ups.length - 1; i >= 0; i--) if (['pending', 'error', 'cancelled'].includes(ups[i].state)) ups.splice(i, 1); renderUploads(); };
+
   /* ------------------------------------------------------------------ rendering */
   function progressHtml(j) {
     const pct = j.size ? Math.min(100, (j.received / j.size) * 100) : 0;
@@ -359,14 +479,16 @@
   function go(tab) {
     view = tab;
     document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('on', t.dataset.tab === tab));
-    $('#page-files').classList.toggle('on', tab === 'files'); $('#page-downloads').classList.toggle('on', tab === 'downloads');
+    $('#page-files').classList.toggle('on', tab === 'files'); $('#page-downloads').classList.toggle('on', tab === 'downloads'); $('#page-upload').classList.toggle('on', tab === 'upload');
     $('#browsehead').style.display = tab === 'files' ? '' : 'none';
     if (tab === 'downloads') { renderDownloads(); if (location.hash !== '#downloads') history.pushState(null, '', '#downloads'); }
-    else if (location.hash === '#downloads') history.pushState(null, '', '#' + enc(cur) + (cur === '/' ? '/' : ''));
+    else if (tab === 'upload') { loadUpInfo(); renderUploads(); if (location.hash !== '#upload') history.pushState(null, '', '#upload'); }
+    else if (location.hash === '#downloads' || location.hash === '#upload') history.pushState(null, '', '#' + enc(cur) + (cur === '/' ? '/' : ''));
   }
   function route() {
     const raw = location.hash.replace(/^#/, '');
     if (raw === 'downloads') { go('downloads'); return; }
+    if (raw === 'upload') { go('upload'); return; }
     const h = decodeURIComponent(raw) || '/';
     go('files'); q.value = ''; clr.classList.remove('on'); load(h.startsWith('/') ? h : '/' + h);
   }
@@ -381,6 +503,9 @@
     if ((el = hit('[data-resume]'))) { ev.stopPropagation(); resume(el.dataset.resume); return; }
     if ((el = hit('[data-cancel]'))) { ev.stopPropagation(); cancel(el.dataset.cancel); return; }
     if ((el = hit('[data-save]'))) { ev.stopPropagation(); save(el.dataset.save); return; }
+    if ((el = hit('[data-upcancel]'))) { ev.stopPropagation(); cancelUpload(el.dataset.upcancel); return; }
+    if ((el = hit('[data-upretry]'))) { ev.stopPropagation(); retryUpload(el.dataset.upretry); return; }
+    if ((el = hit('[data-upremove]'))) { ev.stopPropagation(); removeUpload(el.dataset.upremove); return; }
     if ((el = hit('.tab'))) { go(el.dataset.tab); return; }
     const row = hit('.row');
     if (row && list.contains(row)) {
@@ -409,7 +534,7 @@
   $('#vclose').onclick = () => history.back();
   window.addEventListener('popstate', () => { if (viewer.classList.contains('on')) closeViewer(); else route(); });
   window.addEventListener('hashchange', route);
-  window.addEventListener('beforeunload', (e) => { if ([...jobs.values()].some((j) => j.state === 'downloading')) { e.preventDefault(); e.returnValue = ''; } });
+  window.addEventListener('beforeunload', (e) => { if ([...jobs.values()].some((j) => j.state === 'downloading') || ups.some((u) => u.state === 'uploading')) { e.preventDefault(); e.returnValue = ''; } });
   q.addEventListener('input', () => { clr.classList.toggle('on', !!q.value); render(); });
   clr.onclick = () => { q.value = ''; clr.classList.remove('on'); render(); q.focus(); };
   document.querySelectorAll('.sort button').forEach((b) => b.onclick = () => { document.querySelectorAll('.sort button').forEach((x) => x.classList.remove('on')); b.classList.add('on'); sortBy = b.dataset.s; render(); });
@@ -418,7 +543,7 @@
   $('#cleardone').onclick = clearDone;
   document.addEventListener('visibilitychange', () => { if (!document.hidden && view === 'files') load(cur, { silent: true }); });
   setInterval(() => { if (!document.hidden && !viewer.classList.contains('on') && view === 'files') load(cur, { silent: true }); }, 15000);
-  window.__hp = { jobs: () => [...jobs.values()].map(pub), start, pause, resume, cancel, save, go };
+  window.__hp = { jobs: () => [...jobs.values()].map(pub), start, pause, resume, cancel, save, go, queueUploads, ups: () => ups.map((u) => ({ id: u.id, name: u.name, size: u.size, sent: u.sent, state: u.state, error: u.error })) };
   initDownloads().then(route);
 })();
 </script>

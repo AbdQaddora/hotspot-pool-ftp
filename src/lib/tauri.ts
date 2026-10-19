@@ -30,6 +30,31 @@ export interface Settings {
   /** A real top-level domain (link, site, net…) so phone browsers open it instead of searching. */
   suffix: string;
   autoHotspot: boolean;
+  allowUploads: boolean;
+  uploadPin: string;
+  maxUploadMb: number;
+  inboxQuotaMb: number;
+  inboxDir: string | null;
+}
+
+export interface UploadItem {
+  id: string;
+  name: string;
+  originalName: string;
+  size: number;
+  device: string;
+  ip: string;
+  receivedAt: number;
+  sha256: string;
+  path: string;
+  executable: boolean;
+}
+
+export interface InboxInfo {
+  dir: string;
+  usedBytes: number;
+  quotaBytes: number;
+  pending: number;
 }
 
 /** Suffixes known to be real TLDs (from the public suffix list), offered as quick picks. */
@@ -83,6 +108,12 @@ export interface ShareResult {
 }
 
 export const api = {
+  listUploads: () => invoke<UploadItem[]>("list_uploads"),
+  getInboxInfo: () => invoke<InboxInfo>("get_inbox_info"),
+  approveUpload: (id: string) => invoke<UploadItem[]>("approve_upload", { id }),
+  rejectUpload: (id: string) => invoke<UploadItem[]>("reject_upload", { id }),
+  approveAllUploads: () => invoke<UploadItem[]>("approve_all_uploads"),
+  rejectAllUploads: () => invoke<UploadItem[]>("reject_all_uploads"),
   getSettings: () => invoke<Settings>("get_settings"),
   setSettings: (settings: Settings) => invoke<Settings>("set_settings", { settings }),
   setupName: () => invoke<ServerStatus>("setup_name"),
@@ -108,6 +139,7 @@ export const events = {
   onStats: (cb: (e: StatsEvent) => void): Promise<UnlistenFn> => listen<StatsEvent>("server_stats", (ev) => cb(ev.payload)),
   onStatus: (cb: (e: ServerStatus) => void): Promise<UnlistenFn> => listen<ServerStatus>("server_status", (ev) => cb(ev.payload)),
   onPool: (cb: (e: PoolItem[]) => void): Promise<UnlistenFn> => listen<PoolItem[]>("pool_changed", (ev) => cb(ev.payload)),
+  onUploads: (cb: (e: UploadItem[]) => void): Promise<UnlistenFn> => listen<UploadItem[]>("uploads_changed", (ev) => cb(ev.payload)),
 };
 
 export const DEFAULT_PORT = 80;

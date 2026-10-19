@@ -1585,9 +1585,10 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hotspot-pool-ftp"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "axum",
+ "futures-util",
  "if-addrs",
  "log",
  "mime_guess",
@@ -1595,6 +1596,7 @@ dependencies = [
  "rand",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-clipboard-manager",

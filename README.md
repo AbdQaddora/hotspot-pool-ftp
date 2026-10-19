@@ -44,7 +44,18 @@ The phone sees one unified listing regardless of which drive each item lives on.
 * Breadcrumb navigation, in-folder search, sort by name / size / newest.
 * Tap a file to download it; tap the eye to preview media; folders open in place.
 * **Download manager:** each file shows a progress bar with speed and time left; a **Downloads** tab lists everything with pause / resume (HTTP ranges), cancel, "Pause all" and "Clear finished". Downloads run inside the page (plain `http://` pages cannot use service workers), chunks are stored in IndexedDB on the phone, and a finished file is handed to the browser with one tap on **Save**.
+* **Upload tab:** phones can send files to the laptop with per-file progress. Files land in a quarantine **inbox** on the laptop and are shared only after approval.
 * Auto-refreshes every 15 s and whenever the tab becomes visible.
+
+## Uploads and security
+
+* **Quarantine first.** Uploads are written to `<app data>/inbox/` (changeable in Settings) and never served until the laptop user approves them in the **Inbox** page. Approve moves the file into a shared `Uploads` folder in the pool; Reject deletes it. Executables get a warning badge.
+* **PIN.** Optional upload PIN; 5 wrong attempts lock that IP for a minute. Uploads can be switched off entirely.
+* **Limits.** Per-file maximum and total inbox quota are checked against `Content-Length` before any data is read, and again while streaming; oversize transfers are cut off and the partial file deleted.
+* **Names.** The phone's file name is only used for display after sanitising (no path separators, control characters, Windows reserved names, max 150 chars); on disk each upload is stored under a random id. A SHA-256 of the content is recorded and shown.
+* **Streaming.** Uploads stream to a temp file and are renamed on completion; at most 3 run concurrently; stale partials older than a day are swept on start.
+
+API: `GET /api/upload-info`, `POST /api/upload` with raw body and headers `X-File-Name` (percent-encoded), `X-Device-Name`, `X-Upload-Pin`.
 
 HTTP API used by the page: `GET /api/list?path=/Videos/sub` (JSON) and `GET /dl/<path>` (download, `?inline=1` for preview, supports `Range`).
 
@@ -56,7 +67,8 @@ src-tauri/src
 ├── hotspot.rs   Windows Mobile hotspot on/off + credentials (WinRT tethering API)
 ├── pool.rs      in-memory pool, /<name> → host path mapping, dedupe
 ├── vpath.rs     virtual path resolution + listings (no `..` escapes)
-├── http.rs      axum server: page, /api/list, /dl (Range), telemetry, events
+├── http.rs      axum server: page, /api/list, /dl (Range), /api/upload, telemetry, events
+├── uploads.rs   quarantine inbox: sanitised names, approve/reject, quota
 └── lib.rs       Tauri commands: auto_share, stop_share, start_server, stop_server,
                  get_server_status, get_hotspot_info, set_hotspot, configure_hotspot,
                  add_path_to_pool, remove_path_from_pool, get_pool,
@@ -65,7 +77,7 @@ src-tauri/web/index.html   the phone page (embedded into the binary)
 src
 ├── hooks/       useServer (status/stats/log listeners), usePool, useDragDrop
 ├── components/  TopBar, Nav (Share · Pool · Activity · Settings), PoolManager, StatusBar
-├── components/tabs/  ShareTab (hero, link, QR steps), ActivityTab (tiles, sparkline, log), SettingsTab
+├── components/tabs/  ShareTab (hero, link, QR steps), InboxTab (review uploads), ActivityTab, SettingsTab
 └── lib/tauri.ts typed invoke/listen wrappers
 ```
 

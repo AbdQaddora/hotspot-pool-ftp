@@ -97,6 +97,13 @@ impl PoolState {
         })
     }
 
+    /// Find an item by its canonical host path.
+    pub fn lookup_by_path(&self, path: &Path) -> Option<PoolItem> {
+        let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let s = canonical.to_string_lossy().to_string();
+        self.items.read().ok().and_then(|g| g.iter().find(|i| i.path == s).cloned())
+    }
+
     /// Snapshot of `name -> (path, is_dir)` for listing `/Pool`.
     pub fn entries(&self) -> HashMap<String, (PathBuf, bool, u64)> {
         self.items

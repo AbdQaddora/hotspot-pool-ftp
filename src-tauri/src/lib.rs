@@ -4,6 +4,7 @@ mod names;
 mod network;
 mod pool;
 mod settings;
+mod uploads;
 mod vpath;
 
 use hotspot::HotspotInfo;
@@ -11,6 +12,7 @@ use http::{ServerEngine, ServerStatus};
 use serde::Serialize;
 use settings::Settings;
 use std::time::Duration;
+use uploads::{UploadItem, UploadStore};
 use network::NetInterface;
 use pool::{PoolItem, PoolState};
 use std::sync::Arc;
@@ -110,8 +112,20 @@ fn get_settings(engine: State<'_, Arc<ServerEngine>>) -> Settings {
 async fn set_settings(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, settings: Settings) -> Result<Settings, String> {
     let name = Settings::validate_label(&settings.name)?;
     let suffix = Settings::validate_suffix(&settings.suffix)?;
-    let next = Settings { name, suffix, ..settings };
+    let upload_pin = settings.upload_pin.trim().to_string();
+    if !upload_pin.is_empty() && (upload_pin.len() < 4 || upload_pin.len() > 32) {
+        return Err("The upload PIN must be 4–32 characters.".into());
+    }
+    let max_upload_mb = settings.max_upload_mb.clamp(1, 1024 * 1024);
+    let inbox_quota_mb = settings.inbox_quota_mb.clamp(max_upload_mb, 1024 * 1024 * 10);
+    let inbox_dir = settings.inbox_dir.as_deref().map(str::trim).filter(|d| !d.is_empty()).map(String::from);
+    if let Some(d) = &inbox_dir {
+        std::fs::create_dir_all(d).map_err(|e| format!("Inbox folder is not usable: {e}"))?;
+    }
+    let next = Settings { name, suffix, upload_pin, max_upload_mb, inbox_quota_mb, inbox_dir: inbox_dir.clone(), ..settings };
     next.save(&config_dir(&app)?)?;
+    engine.uploads().set_inbox_dir(inbox_dir.map(std::path::PathBuf::from).unwrap_or_else(|| default_inbox_dir(&app)));
+    let _ = engine.uploads().ensure_dirs();
     let name_changed = engine.set_settings(next.clone());
     if engine.status().running {
         if name_changed {
@@ -137,6 +151,70 @@ async fn check_name(app: AppHandle, engine: State<'_, Arc<ServerEngine>>) -> Res
 
 fn config_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     app.path().app_config_dir().map_err(|e| e.to_string())
+}
+
+fn default_inbox_dir<R: tauri::Runtime>(app: &AppHandle<R>) -> std::path::PathBuf {
+    app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir().join("hotspot-pool")).join("inbox")
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InboxInfo {
+    dir: String,
+    used_bytes: u64,
+    quota_bytes: u64,
+    pending: usize,
+}
+
+#[tauri::command]
+fn list_uploads(engine: State<'_, Arc<ServerEngine>>) -> Vec<UploadItem> {
+    engine.uploads().list()
+}
+
+#[tauri::command]
+fn get_inbox_info(engine: State<'_, Arc<ServerEngine>>) -> InboxInfo {
+    let s = engine.settings();
+    InboxInfo { dir: engine.uploads().inbox_dir().to_string_lossy().to_string(), used_bytes: engine.uploads().used_bytes(), quota_bytes: s.inbox_quota_mb.saturating_mul(1024 * 1024), pending: engine.uploads().list().len() }
+}
+
+#[tauri::command]
+fn approve_upload(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, id: String) -> Result<Vec<UploadItem>, String> {
+    let dest = engine.uploads().approve(&id, engine.pool())?;
+    http::emit_log(&app, "success", "upload", format!("Approved {} → shared in /{}", dest.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(), uploads::SHARED_FOLDER_NAME));
+    broadcast_pool(&app, engine.pool());
+    Ok(engine.broadcast_uploads(&app))
+}
+
+#[tauri::command]
+fn reject_upload(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, id: String) -> Result<Vec<UploadItem>, String> {
+    engine.uploads().reject(&id)?;
+    http::emit_log(&app, "info", "upload", "Rejected an upload");
+    Ok(engine.broadcast_uploads(&app))
+}
+
+#[tauri::command]
+fn approve_all_uploads(app: AppHandle, engine: State<'_, Arc<ServerEngine>>) -> Result<Vec<UploadItem>, String> {
+    let mut n = 0;
+    for item in engine.uploads().list() {
+        if engine.uploads().approve(&item.id, engine.pool()).is_ok() {
+            n += 1;
+        }
+    }
+    http::emit_log(&app, "success", "upload", format!("Approved {n} upload(s)"));
+    broadcast_pool(&app, engine.pool());
+    Ok(engine.broadcast_uploads(&app))
+}
+
+#[tauri::command]
+fn reject_all_uploads(app: AppHandle, engine: State<'_, Arc<ServerEngine>>) -> Result<Vec<UploadItem>, String> {
+    let mut n = 0;
+    for item in engine.uploads().list() {
+        if engine.uploads().reject(&item.id).is_ok() {
+            n += 1;
+        }
+    }
+    http::emit_log(&app, "info", "upload", format!("Rejected {n} upload(s)"));
+    Ok(engine.broadcast_uploads(&app))
 }
 
 #[tauri::command]
@@ -274,7 +352,11 @@ pub fn run() {
                     http::emit_log(&handle, "warn", "server", format!("{n} pooled item(s) no longer exist and were dropped"));
                 });
             }
-            app.manage(Arc::new(ServerEngine::new(pool, settings)));
+            let inbox = settings.inbox_dir.clone().map(std::path::PathBuf::from).unwrap_or_else(|| default_inbox_dir(app.handle()));
+            let uploads = Arc::new(UploadStore::new(inbox));
+            let _ = uploads.ensure_dirs();
+            uploads.sweep_parts();
+            app.manage(Arc::new(ServerEngine::new(pool, settings, uploads)));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -296,6 +378,12 @@ pub fn run() {
             set_settings,
             setup_name,
             check_name,
+            list_uploads,
+            get_inbox_info,
+            approve_upload,
+            reject_upload,
+            approve_all_uploads,
+            reject_all_uploads,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

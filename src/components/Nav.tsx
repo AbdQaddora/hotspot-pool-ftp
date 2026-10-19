@@ -1,18 +1,19 @@
-import { Activity, FolderOpen, Settings, Share2 } from "lucide-react";
+import { Activity, FolderOpen, Inbox, Settings, Share2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ServerStatus, StatsEvent } from "@/lib/tauri";
 
-export type Tab = "share" | "pool" | "activity" | "settings";
+export type Tab = "share" | "pool" | "inbox" | "activity" | "settings";
 
 const ITEMS: Array<{ id: Tab; label: string; icon: React.ComponentType<{ className?: string }>; hint: string }> = [
   { id: "share", label: "Share", icon: Share2, hint: "Connect a phone" },
   { id: "pool", label: "Pool", icon: FolderOpen, hint: "Files & folders" },
+  { id: "inbox", label: "Inbox", icon: Inbox, hint: "Uploads to review" },
   { id: "activity", label: "Activity", icon: Activity, hint: "Devices & log" },
   { id: "settings", label: "Settings", icon: Settings, hint: "Name, hotspot, network" },
 ];
 
-export function Nav({ tab, onTab, status, stats, poolCount }: { tab: Tab; onTab: (t: Tab) => void; status: ServerStatus; stats: StatsEvent; poolCount: number }) {
-  const badge = (id: Tab) => (id === "pool" ? poolCount : id === "activity" && status.running ? stats.connected : 0);
+export function Nav({ tab, onTab, status, stats, poolCount, inboxCount }: { tab: Tab; onTab: (t: Tab) => void; status: ServerStatus; stats: StatsEvent; poolCount: number; inboxCount: number }) {
+  const badge = (id: Tab) => (id === "pool" ? poolCount : id === "inbox" ? inboxCount : id === "activity" && status.running ? stats.connected : 0);
   return (
     <nav className="flex w-[196px] shrink-0 flex-col border-r border-border bg-background">
       <div className="flex-1 p-2">
@@ -33,7 +34,7 @@ export function Nav({ tab, onTab, status, stats, poolCount }: { tab: Tab; onTab:
                 <span className="block text-[13px] font-medium leading-4">{label}</span>
                 <span className="block truncate text-[11px] leading-4 text-muted-foreground">{hint}</span>
               </span>
-              {n > 0 && <span className="rounded-full bg-secondary px-1.5 py-0.5 font-mono text-[10.5px] leading-none text-muted-foreground">{n}</span>}
+              {n > 0 && <span className={cn("rounded-full px-1.5 py-0.5 font-mono text-[10.5px] leading-none", id === "inbox" ? "bg-live/20 text-live" : "bg-secondary text-muted-foreground")}>{n}</span>}
             </button>
           );
         })}

@@ -1,6 +1,6 @@
 [package]
 name = "hotspot-pool-ftp"
-version = "0.6.0"
+version = "0.7.0"
 description = "Share files with phones over your laptop's Wi-Fi hotspot"
 authors = ["AbdQaddora"]
 edition = "2021"
@@ -26,6 +26,8 @@ tokio-util = { version = "0.7", features = ["io"] }
 mime_guess = "2"
 percent-encoding = "2"
 rand = "0.9"
+sha2 = "0.10"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 if-addrs = "0.15"
 log = "0.4"

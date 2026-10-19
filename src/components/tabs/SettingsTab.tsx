@@ -1,11 +1,12 @@
-import { openUrl } from "@tauri-apps/plugin-opener";
-import { AlertTriangle, CheckCircle2, ExternalLink, Globe, Info, Loader2, Network, Power, RefreshCw, Settings2, Wifi } from "lucide-react";
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { AlertTriangle, CheckCircle2, ExternalLink, FolderOpen, Globe, Inbox, Info, Loader2, Network, Power, RefreshCw, Settings2, Wifi } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader, PageHeader, Row } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
-import { SUFFIX_PICKS, type HotspotInfo, type NetInterface, type ServerStatus, type Settings } from "@/lib/tauri";
+import { SUFFIX_PICKS, type HotspotInfo, type InboxInfo, type NetInterface, type ServerStatus, type Settings } from "@/lib/tauri";
 
 interface Props {
   status: ServerStatus;
@@ -23,11 +24,19 @@ interface Props {
   onOpenHotspotSettings: () => void;
   onSelectIp: (ip: string) => void;
   onRefresh: () => void;
+  inbox: InboxInfo | null;
 }
 
 const input = "h-8 rounded-md border border-border bg-background px-2.5 text-[12.5px] outline-none focus:ring-1 focus:ring-ring disabled:opacity-50";
 
-export function SettingsTab({ status, settings, hotspot, interfaces, selectedIp, busy, nameBusy, onSaveSettings, onSetupName, onCheckName, onToggleHotspot, onConfigureHotspot, onOpenHotspotSettings, onSelectIp, onRefresh }: Props) {
+export function SettingsTab({ status, settings, hotspot, interfaces, selectedIp, busy, nameBusy, onSaveSettings, onSetupName, onCheckName, onToggleHotspot, onConfigureHotspot, onOpenHotspotSettings, onSelectIp, onRefresh, inbox }: Props) {
+  const [pin, setPin] = useState(settings.uploadPin);
+  const [maxMb, setMaxMb] = useState(String(settings.maxUploadMb));
+  const [quotaMb, setQuotaMb] = useState(String(settings.inboxQuotaMb));
+  useEffect(() => setPin(settings.uploadPin), [settings.uploadPin]);
+  useEffect(() => setMaxMb(String(settings.maxUploadMb)), [settings.maxUploadMb]);
+  useEffect(() => setQuotaMb(String(settings.inboxQuotaMb)), [settings.inboxQuotaMb]);
+  const uploadDirty = pin !== settings.uploadPin || Number(maxMb) !== settings.maxUploadMb || Number(quotaMb) !== settings.inboxQuotaMb;
   const [label, setLabel] = useState(settings.name);
   const [suffix, setSuffix] = useState(settings.suffix);
   const [ssid, setSsid] = useState(hotspot.ssid ?? "");
@@ -152,6 +161,51 @@ export function SettingsTab({ status, settings, hotspot, interfaces, selectedIp,
               </Button>
             </Row>
           )}
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Uploads from phones"
+          description="Files land in a quarantine inbox and are shared only after you approve them."
+          icon={<Inbox />}
+          right={<Switch checked={settings.allowUploads} onCheckedChange={(v) => onSaveSettings({ ...settings, allowUploads: v })} disabled={busy} aria-label="Allow uploads" />}
+        />
+        <CardBody>
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              await onSaveSettings({ ...settings, uploadPin: pin.trim(), maxUploadMb: Math.max(1, Number(maxMb) || 1), inboxQuotaMb: Math.max(1, Number(quotaMb) || 1) });
+            }}
+          >
+            <Row label="Upload PIN" description="Phones must enter it before sending. Leave empty to allow anyone on the hotspot. 5 wrong tries lock an IP for a minute.">
+              <input className={`${input} w-[150px] font-mono`} value={pin} onChange={(e) => setPin(e.target.value)} placeholder="none" maxLength={32} aria-label="Upload PIN" />
+            </Row>
+            <Row label="Largest file" description="Bigger uploads are refused before any data is received.">
+              <input type="number" min={1} className={`${input} w-[110px] text-right font-mono`} value={maxMb} onChange={(e) => setMaxMb(e.target.value)} aria-label="Max upload MB" />
+              <span className="text-[12px] text-muted-foreground">MB</span>
+            </Row>
+            <Row label="Inbox size limit" description="Total space the quarantine may use until you review it.">
+              <input type="number" min={1} className={`${input} w-[110px] text-right font-mono`} value={quotaMb} onChange={(e) => setQuotaMb(e.target.value)} aria-label="Inbox quota MB" />
+              <span className="text-[12px] text-muted-foreground">MB</span>
+              <Button type="submit" size="sm" variant={uploadDirty ? "default" : "outline"} disabled={!uploadDirty || busy}>Save</Button>
+            </Row>
+          </form>
+          <Row label="Inbox folder" description={inbox?.dir ?? "—"}>
+            <Button size="sm" variant="ghost" onClick={() => inbox?.dir && revealItemInDir(inbox.dir)} disabled={!inbox?.dir}><FolderOpen /> Open</Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={async () => {
+                const sel = await openDialog({ directory: true, multiple: false, title: "Choose the inbox folder" });
+                if (typeof sel === "string") await onSaveSettings({ ...settings, inboxDir: sel });
+              }}
+            >
+              Change…
+            </Button>
+            {settings.inboxDir && <Button size="sm" variant="ghost" onClick={() => onSaveSettings({ ...settings, inboxDir: null })}>Default</Button>}
+          </Row>
         </CardBody>
       </Card>
 

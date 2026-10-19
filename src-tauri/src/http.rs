@@ -6,14 +6,17 @@ use crate::{
     names,
     pool::PoolState,
     settings::Settings,
+    uploads::{UploadItem, UploadStore},
     vpath::{self, Entry, Resolved},
 };
+use futures_util::StreamExt;
+use sha2::Digest;
 use axum::{
     body::Body,
     extract::{ConnectInfo, Path as AxPath, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{Html, IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -31,7 +34,7 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Runtime};
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncSeekExt, ReadBuf},
+    io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, ReadBuf},
     sync::oneshot,
 };
 use tokio_util::io::ReaderStream;
@@ -44,6 +47,10 @@ const WEB_PAGE: &str = include_str!("../web/index.html");
 pub const EV_LOG: &str = "server_log";
 pub const EV_STATS: &str = "server_stats";
 pub const EV_STATUS: &str = "server_status";
+pub const EV_UPLOADS: &str = "uploads_changed";
+const MAX_CONCURRENT_UPLOADS: u64 = 3;
+const PIN_MAX_ATTEMPTS: u32 = 5;
+const PIN_WINDOW: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -127,7 +134,9 @@ pub struct Telemetry {
     pub window_bytes: AtomicU64,
     pub total_bytes: AtomicU64,
     pub active_transfers: AtomicU64,
+    pub active_uploads: AtomicU64,
     clients: Mutex<HashMap<IpAddr, Instant>>,
+    pin_attempts: Mutex<HashMap<IpAddr, (u32, Instant)>>,
 }
 
 impl Telemetry {
@@ -149,7 +158,28 @@ impl Telemetry {
         self.window_bytes.store(0, Ordering::Relaxed);
         self.total_bytes.store(0, Ordering::Relaxed);
         self.active_transfers.store(0, Ordering::Relaxed);
+        self.active_uploads.store(0, Ordering::Relaxed);
         self.clients.lock().expect("clients lock").clear();
+        self.pin_attempts.lock().expect("pin lock").clear();
+    }
+    /// Returns false when this IP has failed the PIN too often recently.
+    fn pin_allowed(&self, ip: IpAddr) -> bool {
+        let m = self.pin_attempts.lock().expect("pin lock");
+        match m.get(&ip) {
+            Some((n, t)) if t.elapsed() < PIN_WINDOW && *n >= PIN_MAX_ATTEMPTS => false,
+            _ => true,
+        }
+    }
+    fn pin_failed(&self, ip: IpAddr) {
+        let mut m = self.pin_attempts.lock().expect("pin lock");
+        let e = m.entry(ip).or_insert((0, Instant::now()));
+        if e.1.elapsed() >= PIN_WINDOW {
+            *e = (0, Instant::now());
+        }
+        e.0 += 1;
+    }
+    fn pin_ok(&self, ip: IpAddr) {
+        self.pin_attempts.lock().expect("pin lock").remove(&ip);
     }
 }
 
@@ -157,11 +187,13 @@ struct Ctx<R: Runtime> {
     app: AppHandle<R>,
     pool: Arc<PoolState>,
     telemetry: Arc<Telemetry>,
+    uploads: Arc<UploadStore>,
+    settings: Arc<Mutex<Settings>>,
 }
 
 impl<R: Runtime> Clone for Ctx<R> {
     fn clone(&self) -> Self {
-        Ctx { app: self.app.clone(), pool: self.pool.clone(), telemetry: self.telemetry.clone() }
+        Ctx { app: self.app.clone(), pool: self.pool.clone(), telemetry: self.telemetry.clone(), uploads: self.uploads.clone(), settings: self.settings.clone() }
     }
 }
 
@@ -323,6 +355,138 @@ async fn download<R: Runtime>(
     resp.body(body).unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
+// ---------------------------------------------------------------- uploads
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UploadInfo {
+    allowed: bool,
+    pin_required: bool,
+    max_bytes: u64,
+    free_bytes: u64,
+}
+
+fn upload_settings<R: Runtime>(ctx: &Ctx<R>) -> Settings {
+    ctx.settings.lock().expect("settings lock").clone()
+}
+
+async fn upload_info<R: Runtime>(State(ctx): State<Ctx<R>>, ConnectInfo(addr): ConnectInfo<SocketAddr>) -> Json<UploadInfo> {
+    ctx.seen(addr);
+    let s = upload_settings(&ctx);
+    let quota = s.inbox_quota_mb.saturating_mul(1024 * 1024);
+    Json(UploadInfo { allowed: s.allow_uploads, pin_required: !s.upload_pin.is_empty(), max_bytes: s.max_upload_mb.saturating_mul(1024 * 1024), free_bytes: quota.saturating_sub(ctx.uploads.used_bytes()) })
+}
+
+fn header_str(h: &HeaderMap, name: &str) -> Option<String> {
+    h.get(name).and_then(|v| v.to_str().ok()).map(|v| percent_encoding::percent_decode_str(v).decode_utf8_lossy().to_string())
+}
+
+fn json_err(status: StatusCode, msg: &str, pin_required: bool) -> Response {
+    (status, Json(serde_json::json!({ "error": msg, "pinRequired": pin_required }))).into_response()
+}
+
+/// Streams a raw request body into the quarantine inbox.
+async fn upload<R: Runtime>(State(ctx): State<Ctx<R>>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap, body: Body) -> Response {
+    ctx.seen(addr);
+    let s = upload_settings(&ctx);
+    if !s.allow_uploads {
+        return json_err(StatusCode::FORBIDDEN, "Uploads are turned off on the laptop.", false);
+    }
+    let ip = addr.ip();
+    if !s.upload_pin.is_empty() {
+        if !ctx.telemetry.pin_allowed(ip) {
+            return json_err(StatusCode::TOO_MANY_REQUESTS, "Too many wrong PINs. Wait a minute and try again.", true);
+        }
+        match header_str(&headers, "x-upload-pin") {
+            Some(p) if p == s.upload_pin => ctx.telemetry.pin_ok(ip),
+            Some(_) => {
+                ctx.telemetry.pin_failed(ip);
+                ctx.log("warn", "upload", format!("{ip} sent a wrong upload PIN"), Some(ip.to_string()), None, None);
+                return json_err(StatusCode::UNAUTHORIZED, "Wrong PIN.", true);
+            }
+            None => return json_err(StatusCode::UNAUTHORIZED, "This laptop asks for a PIN to upload.", true),
+        }
+    }
+    let Some(name) = header_str(&headers, "x-file-name").filter(|n| !n.trim().is_empty()) else {
+        return json_err(StatusCode::BAD_REQUEST, "Missing file name.", false);
+    };
+    let device = header_str(&headers, "x-device-name").unwrap_or_default();
+    let Some(len) = headers.get(header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<u64>().ok()) else {
+        return json_err(StatusCode::LENGTH_REQUIRED, "Missing size.", false);
+    };
+    let max = s.max_upload_mb.saturating_mul(1024 * 1024);
+    if len > max {
+        return json_err(StatusCode::PAYLOAD_TOO_LARGE, &format!("Files up to {} are accepted.", human_bytes(max)), false);
+    }
+    let quota = s.inbox_quota_mb.saturating_mul(1024 * 1024);
+    if ctx.uploads.used_bytes().saturating_add(len) > quota {
+        return json_err(StatusCode::INSUFFICIENT_STORAGE, "The laptop's inbox is full. Ask its owner to review uploads.", false);
+    }
+    if ctx.telemetry.active_uploads.load(Ordering::Relaxed) >= MAX_CONCURRENT_UPLOADS {
+        return json_err(StatusCode::TOO_MANY_REQUESTS, "Too many uploads at once. Try again in a moment.", false);
+    }
+    if ctx.uploads.ensure_dirs().is_err() {
+        return json_err(StatusCode::INTERNAL_SERVER_ERROR, "The inbox folder is not writable.", false);
+    }
+
+    let id = UploadStore::new_id();
+    let part = ctx.uploads.part_dir().join(&id);
+    let mut file = match tokio::fs::File::create(&part).await {
+        Ok(f) => f,
+        Err(_) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, "Cannot write to the inbox.", false),
+    };
+    ctx.telemetry.active_uploads.fetch_add(1, Ordering::Relaxed);
+    let shown = crate::uploads::sanitize_name(&name);
+    ctx.log("info", "upload", format!("{} ({}) is sending {} ({})", ip, if device.is_empty() { "phone" } else { &device }, shown, human_bytes(len)), Some(ip.to_string()), Some(shown.clone()), Some(len));
+
+    let mut stream = body.into_data_stream();
+    let mut hasher = sha2::Sha256::new();
+    let mut received: u64 = 0;
+    let mut failure: Option<(StatusCode, &str)> = None;
+    while let Some(chunk) = stream.next().await {
+        let chunk = match chunk {
+            Ok(c) => c,
+            Err(_) => {
+                failure = Some((StatusCode::BAD_REQUEST, "Upload interrupted."));
+                break;
+            }
+        };
+        received += chunk.len() as u64;
+        if received > len || received > max {
+            failure = Some((StatusCode::PAYLOAD_TOO_LARGE, "Upload exceeded its declared size."));
+            break;
+        }
+        hasher.update(&chunk);
+        if file.write_all(&chunk).await.is_err() {
+            failure = Some((StatusCode::INTERNAL_SERVER_ERROR, "Disk write failed."));
+            break;
+        }
+    }
+    let _ = file.flush().await;
+    drop(file);
+    ctx.telemetry.active_uploads.fetch_sub(1, Ordering::Relaxed);
+    if failure.is_none() && received != len {
+        failure = Some((StatusCode::BAD_REQUEST, "Upload incomplete."));
+    }
+    if let Some((status, msg)) = failure {
+        let _ = tokio::fs::remove_file(&part).await;
+        ctx.log("warn", "upload", format!("{ip}: {shown} ({msg})"), Some(ip.to_string()), Some(shown), Some(received));
+        return json_err(status, msg, false);
+    }
+    let sha = format!("{:x}", hasher.finalize());
+    match ctx.uploads.commit(&id, &name, received, &device, &ip.to_string(), &sha) {
+        Ok(item) => {
+            ctx.log("success", "upload", format!("{} sent {} ({}) — waiting for approval", if device.is_empty() { ip.to_string() } else { device.clone() }, item.name, human_bytes(item.size)), Some(ip.to_string()), Some(item.name.clone()), Some(item.size));
+            let _ = ctx.app.emit(EV_UPLOADS, ctx.uploads.list());
+            Json(serde_json::json!({ "id": item.id, "name": item.name, "size": item.size, "status": "pending" })).into_response()
+        }
+        Err(e) => {
+            let _ = tokio::fs::remove_file(&part).await;
+            json_err(StatusCode::INTERNAL_SERVER_ERROR, &format!("Could not store the upload: {e}"), false)
+        }
+    }
+}
+
 /// Counts streamed bytes for the live speed gauge and reports completion.
 struct CountingReader<R> {
     inner: R,
@@ -367,23 +531,36 @@ pub struct ServerEngine {
     pool: Arc<PoolState>,
     telemetry: Arc<Telemetry>,
     running: Mutex<Option<Running>>,
-    settings: Mutex<Settings>,
+    settings: Arc<Mutex<Settings>>,
     name_state: Mutex<NameState>,
+    uploads: Arc<UploadStore>,
 }
 
 impl ServerEngine {
-    pub fn new(pool: Arc<PoolState>, settings: Settings) -> Self {
+    pub fn new(pool: Arc<PoolState>, settings: Settings, uploads: Arc<UploadStore>) -> Self {
         ServerEngine {
             pool,
             telemetry: Arc::new(Telemetry::default()),
             running: Mutex::new(None),
-            settings: Mutex::new(settings),
+            settings: Arc::new(Mutex::new(settings)),
             name_state: Mutex::new(NameState::default()),
+            uploads,
         }
     }
 
     pub fn pool(&self) -> &Arc<PoolState> {
         &self.pool
+    }
+
+    pub fn uploads(&self) -> &Arc<UploadStore> {
+        &self.uploads
+    }
+
+    /// Current inbox listing, also pushed to the UI.
+    pub fn broadcast_uploads<R: Runtime>(&self, app: &AppHandle<R>) -> Vec<UploadItem> {
+        let list = self.uploads.list();
+        let _ = app.emit(EV_UPLOADS, list.clone());
+        list
     }
 
     pub fn settings(&self) -> Settings {
@@ -483,12 +660,14 @@ impl ServerEngine {
         Ok(self.verify_name(app).await)
     }
 
-    pub fn router<R: Runtime>(app: AppHandle<R>, pool: Arc<PoolState>, telemetry: Arc<Telemetry>) -> Router {
+    pub fn router<R: Runtime>(app: AppHandle<R>, pool: Arc<PoolState>, telemetry: Arc<Telemetry>, uploads: Arc<UploadStore>, settings: Arc<Mutex<Settings>>) -> Router {
         Router::new()
             .route("/", get(page::<R>))
             .route("/api/list", get(list::<R>))
+            .route("/api/upload-info", get(upload_info::<R>))
+            .route("/api/upload", post(upload::<R>))
             .route("/dl/{*path}", get(download::<R>))
-            .with_state(Ctx { app, pool, telemetry })
+            .with_state(Ctx { app, pool, telemetry, uploads, settings })
     }
 
     async fn bind(ip: IpAddr, candidates: &[u16]) -> Result<tokio::net::TcpListener, String> {
@@ -519,7 +698,7 @@ impl ServerEngine {
         *self.name_state.lock().expect("name lock") = NameState::default();
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-        let router = Self::router(app.clone(), self.pool.clone(), self.telemetry.clone());
+        let router = Self::router(app.clone(), self.pool.clone(), self.telemetry.clone(), self.uploads.clone(), self.settings.clone());
         let app_for_server = app.clone();
         tauri::async_runtime::spawn(async move {
             let res = axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
@@ -619,7 +798,9 @@ mod tests {
 
         let app = tauri::test::mock_app();
         let telemetry = Arc::new(Telemetry::default());
-        let router = ServerEngine::router(app.handle().clone(), pool.clone(), telemetry.clone());
+        let uploads = Arc::new(UploadStore::new(dir.join("inbox")));
+        let settings = Arc::new(Mutex::new(Settings { upload_pin: "1234".into(), max_upload_mb: 1, ..Settings::default() }));
+        let router = ServerEngine::router(app.handle().clone(), pool.clone(), telemetry.clone(), uploads.clone(), settings.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let (tx, rx) = oneshot::channel::<()>();
@@ -670,6 +851,43 @@ mod tests {
         assert_eq!(telemetry.total_bytes.load(Ordering::Relaxed), 3 + 3);
         assert_eq!(telemetry.connected(), 1);
         assert_eq!(telemetry.active_transfers.load(Ordering::Relaxed), 0);
+
+        // ---- uploads: PIN, size limit, sanitised name, quarantine
+        let info = curl(&[&format!("{base}/api/upload-info")]);
+        assert!(info.contains("\"pinRequired\":true") && info.contains("\"maxBytes\":1048576"), "{info}");
+        let payload = dir.join("up.bin");
+        std::fs::write(&payload, vec![7u8; 1000]).unwrap();
+        let data = format!("@{}", payload.display());
+        let post = |extra: &[&str]| {
+            let mut args: Vec<&str> = vec!["-o", "/dev/null", "-w", "%{http_code}", "-X", "POST", "--data-binary", &data, "-H", "X-File-Name: a.txt"];
+            args.extend_from_slice(extra);
+            let url = format!("{base}/api/upload");
+            let mut v: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+            v.push(url);
+            let r: Vec<&str> = v.iter().map(|s| s.as_str()).collect();
+            curl(&r)
+        };
+        assert_eq!(post(&[]), "401");
+        assert_eq!(post(&["-H", "X-Upload-Pin: 0000"]), "401");
+        let ok = curl(&["-X", "POST", "--data-binary", &data, "-H", "X-File-Name: ../evil:name.txt", "-H", "X-Device-Name: Pixel%208", "-H", "X-Upload-Pin: 1234", &format!("{base}/api/upload")]);
+        assert!(ok.contains("\"name\":\"evil_name.txt\"") && ok.contains("\"status\":\"pending\""), "{ok}");
+        let listed = uploads.list();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].device, "Pixel 8");
+        assert_eq!(listed[0].size, 1000);
+        assert!(std::path::Path::new(&listed[0].path).starts_with(dir.join("inbox")));
+        assert_eq!(status(&format!("{base}/dl/evil_name.txt")), "404", "quarantined files are not served");
+        let big = dir.join("big.bin");
+        std::fs::write(&big, vec![1u8; 2 * 1024 * 1024]).unwrap();
+        let bigdata = format!("@{}", big.display());
+        assert_eq!(curl(&["-o", "/dev/null", "-w", "%{http_code}", "-X", "POST", "--data-binary", &bigdata, "-H", "X-File-Name: big.bin", "-H", "X-Upload-Pin: 1234", &format!("{base}/api/upload")]), "413");
+        settings.lock().unwrap().allow_uploads = false;
+        assert_eq!(post(&["-H", "X-Upload-Pin: 1234"]), "403");
+        let dest = uploads.approve(&listed[0].id, &pool).unwrap();
+        assert!(dest.ends_with("evil_name.txt"));
+        let shared = curl(&[&format!("{base}/api/list?path=/Uploads")]);
+        assert!(shared.contains("evil_name.txt"), "{shared}");
+        assert_eq!(curl(&["-o", "/dev/null", "-w", "%{size_download}", &format!("{base}/dl/Uploads/evil_name.txt")]), "1000");
 
         let _ = tx.send(());
         let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
