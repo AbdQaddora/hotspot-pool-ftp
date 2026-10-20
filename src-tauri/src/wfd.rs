@@ -22,6 +22,7 @@ pub struct ApInfo {
 }
 
 /// `WiFiDirectError`: 0 Success, 1 RadioNotAvailable, 2 ResourceInUse.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn abort_reason(error_code: i32) -> &'static str {
     match error_code {
         1 => "Wi-Fi is turned off. Turn Wi-Fi on first.",

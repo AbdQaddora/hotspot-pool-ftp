@@ -216,13 +216,30 @@ pub(crate) fn init_apartment() {
 }
 
 /// Blocking calls; run them on a blocking thread.
+///
+/// When our own Wi-Fi Direct access point is running it is the hotspot;
+/// otherwise this is Windows Mobile Hotspot.
 pub fn info() -> HotspotInfo {
+    let ap = crate::wfd::info();
+    if ap.running {
+        let wifi_qr = ap.ssid.as_deref().map(|s| wifi_qr(s, ap.passphrase.as_deref()));
+        return HotspotInfo { supported: true, state: "on", ssid: ap.ssid, passphrase: ap.passphrase, client_count: Some(ap.clients.len() as u32), wifi_qr, error: None };
+    }
+    imp::info()
+}
+
+/// Windows Mobile Hotspot only (ignores our access point).
+pub fn mobile_info() -> HotspotInfo {
     imp::info()
 }
 pub fn set_enabled(on: bool, preferred: Option<&str>) -> Result<HotspotInfo, String> {
     imp::set_enabled(on, preferred)
 }
 pub fn clients() -> Vec<HotspotClient> {
+    let ap = crate::wfd::info();
+    if ap.running {
+        return ap.clients;
+    }
     imp::clients()
 }
 pub fn configure(ssid: &str, passphrase: &str) -> Result<HotspotInfo, String> {

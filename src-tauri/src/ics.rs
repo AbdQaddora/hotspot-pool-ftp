@@ -287,6 +287,25 @@ pub fn sharing_state_cached(fresh: bool) -> SharingState {
     guard.get_or_insert_with(Cached::default).get(fresh, std::time::Duration::from_secs(20), sharing_state)
 }
 
+/// True when `i` is the hotspot adapter and ICS has given it its gateway address.
+pub fn is_gateway(i: &crate::network::NetInterface, adapter_id: &str) -> bool {
+    i.adapter_id.as_deref() == Some(adapter_id) && i.ip == "192.168.137.1"
+}
+
+/// Blocking: poll the interface list until the adapter holds 192.168.137.1.
+pub fn wait_for_gateway(adapter_id: &str, timeout: std::time::Duration) -> Option<crate::network::NetInterface> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if let Some(i) = crate::network::list_interfaces().into_iter().find(|i| is_gateway(i, adapter_id)) {
+            return Some(i);
+        }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+}
+
 /// The hotspot's own adapter shows up as a profile too; it can't be its own upstream.
 pub fn without_adapter(upstreams: Vec<Upstream>, adapter_id: Option<&str>) -> Vec<Upstream> {
     match adapter_id {
@@ -538,6 +557,15 @@ mod tests {
         assert_eq!(effective_upstream(None, &no_default).map(|u| u.id.as_str()), Some(B));
         assert_eq!(effective_upstream(None, &[local.clone()]).map(|u| u.id.as_str()), Some(H));
         assert_eq!(effective_upstream(None, &[]), None);
+    }
+
+    #[test]
+    fn gateway_wait_predicate() {
+        let mk = |ip: &str, id: Option<&str>| crate::network::NetInterface { name: "Local Area Connection* 2".into(), ip: ip.into(), is_loopback: false, is_hotspot: true, score: 100, adapter_id: id.map(String::from) };
+        assert!(is_gateway(&mk("192.168.137.1", Some(H)), H));
+        assert!(!is_gateway(&mk("169.254.10.7", Some(H)), H));
+        assert!(!is_gateway(&mk("192.168.137.1", Some(A)), H));
+        assert!(!is_gateway(&mk("192.168.137.1", None), H));
     }
 
     #[test]
