@@ -52,6 +52,7 @@ pub fn rewrite_hosts(contents: &str, name: &str, ip: Ipv4Addr) -> String {
 }
 
 /// Elevated script body that installs the new hosts file and flushes DNS.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn hosts_script(payload: &str, hosts_path: &str) -> String {
     format!(
         "Copy-Item -LiteralPath {} -Destination {} -Force\r\nipconfig /flushdns | Out-Null\r\n",

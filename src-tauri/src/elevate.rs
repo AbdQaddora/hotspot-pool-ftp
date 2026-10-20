@@ -29,7 +29,7 @@ pub fn hidden_script_name() -> String {
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn wrap_elevated_body(body: &str, err_path: &str) -> String {
     format!(
-        "$ErrorActionPreference = 'Stop'\r\n$step = ''\r\ntry {{\r\n{body}\r\n}} catch {{\r\n  $where = if ($step) {{ \"$step: \" }} else {{ '' }}\r\n  \"$where$($_.Exception.Message)\" | Out-File -LiteralPath {} -Encoding utf8\r\n  exit 1\r\n}}\r\n",
+        "$ErrorActionPreference = 'Stop'\r\n$step = ''\r\ntry {{\r\n{body}\r\n}} catch {{\r\n  $where = if ($step) {{ \"${{step}}: \" }} else {{ '' }}\r\n  \"$where$($_.Exception.Message)\" | Out-File -LiteralPath {} -Encoding utf8\r\n  exit 1\r\n}}\r\n",
         ps_quote(err_path)
     )
 }
