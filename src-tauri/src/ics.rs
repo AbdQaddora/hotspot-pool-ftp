@@ -141,28 +141,65 @@ pub fn read_script() -> &'static str {
 }
 
 /// PowerShell that makes `public` the shared connection and `private` the
-/// hotspot side, clearing any previous ICS pairing first. Both ids must be
-/// GUIDs; nothing else is ever interpolated.
+/// hotspot side. Both ids must be GUIDs; nothing else is ever interpolated.
+///
+/// Order matters, learned the hard way: `EnableSharing` fails with
+/// 0x80040201 ("An event was unable to invoke any of the subscribers") when
+/// `root\Microsoft\HomeNet` still holds IsIcsPublic/IsIcsPrivate flags for
+/// adapters that no longer exist (KB 828807) — and Mobile Hotspot creates a
+/// fresh virtual adapter on every start, so those pile up. The script clears
+/// them, makes sure the ICS service runs, enables public then private, and
+/// retries after another cleanup if Windows still refuses. `$step` names the
+/// stage for the error file.
 pub fn apply_script(public: &str, private: &str) -> Result<String, String> {
     let pub_id = norm_guid(public).ok_or_else(|| format!("Not an adapter id: {public}"))?;
     let priv_id = norm_guid(private).ok_or_else(|| format!("Not an adapter id: {private}"))?;
-    Ok(format!(
-        concat!(
-            "$m = New-Object -ComObject HNetCfg.HNetShare\r\n",
-            "$conns = @($m.EnumEveryConnection)\r\n",
-            "$cfgOf = {{ param($c) $m.INetSharingConfigurationForINetConnection.Invoke($c) }}\r\n",
-            "# Disabling the public side also clears its private peer; a stale 'enabled' on the peer may then throw.\r\n",
-            "foreach ($c in $conns) {{ $cfg = & $cfgOf $c; if ($cfg.SharingEnabled) {{ try {{ $cfg.DisableSharing() }} catch {{}} }} }}\r\n",
-            "$pub = $conns | Where-Object {{ $m.NetConnectionProps.Invoke($_).Guid -eq '{pub}' }} | Select-Object -First 1\r\n",
-            "$priv = $conns | Where-Object {{ $m.NetConnectionProps.Invoke($_).Guid -eq '{priv}' }} | Select-Object -First 1\r\n",
-            "if (-not $pub) {{ throw 'Shared connection not found' }}\r\n",
-            "if (-not $priv) {{ throw 'Hotspot adapter not found' }}\r\n",
-            "(& $cfgOf $pub).EnableSharing(0)\r\n",
-            "(& $cfgOf $priv).EnableSharing(1)\r\n",
-        ),
-        pub = braced_upper(&pub_id),
-        priv = braced_upper(&priv_id)
-    ))
+    const TEMPLATE: &str = concat!(
+        "$step = 'start'\r\n",
+        "$m = New-Object -ComObject HNetCfg.HNetShare\r\n",
+        "$conns = @($m.EnumEveryConnection)\r\n",
+        "$cfgOf = { param($c) $m.INetSharingConfigurationForINetConnection.Invoke($c) }\r\n",
+        "$propsOf = { param($c) $m.NetConnectionProps.Invoke($c) }\r\n",
+        "function Clear-StaleIcs {\r\n",
+        "  # KB 828807: stale IsIcsPublic/IsIcsPrivate flags make EnableSharing fail with 0x80040201.\r\n",
+        "  foreach ($e in @(Get-WmiObject -Namespace 'root\\Microsoft\\HomeNet' -Class HNet_ConnectionProperties -ErrorAction SilentlyContinue)) {\r\n",
+        "    if ($e.IsIcsPublic -or $e.IsIcsPrivate) { try { $e.IsIcsPublic = $false; $e.IsIcsPrivate = $false; $e.Put() | Out-Null } catch {} }\r\n",
+        "  }\r\n",
+        "}\r\n",
+        "$step = 'ICS service'\r\n",
+        "try {\r\n",
+        "  $svc = Get-Service SharedAccess -ErrorAction Stop\r\n",
+        "  if ($svc.StartType -eq 'Disabled') { Set-Service SharedAccess -StartupType Manual }\r\n",
+        "  if ($svc.Status -ne 'Running') { Start-Service SharedAccess }\r\n",
+        "} catch {}\r\n",
+        "$step = 'disable old sharing'\r\n",
+        "# Disabling the public side also clears its private peer; a stale 'enabled' on the peer may then throw.\r\n",
+        "foreach ($c in $conns) { $cfg = & $cfgOf $c; if ($cfg.SharingEnabled) { try { $cfg.DisableSharing() } catch {} } }\r\n",
+        "$step = 'clear stale flags'\r\n",
+        "Clear-StaleIcs\r\n",
+        "$step = 'find connections'\r\n",
+        "$pub = $conns | Where-Object { (& $propsOf $_).Guid -eq '__PUB__' } | Select-Object -First 1\r\n",
+        "$priv = $conns | Where-Object { (& $propsOf $_).Guid -eq '__PRIV__' } | Select-Object -First 1\r\n",
+        "if (-not $pub) { throw 'Shared connection not found' }\r\n",
+        "if (-not $priv) { throw 'Hotspot adapter not found' }\r\n",
+        "$attempt = 0\r\n",
+        "while ($true) {\r\n",
+        "  $attempt++\r\n",
+        "  try {\r\n",
+        "    $step = \"enable public (attempt $attempt)\"\r\n",
+        "    (& $cfgOf $pub).EnableSharing(0)\r\n",
+        "    $step = \"enable private (attempt $attempt)\"\r\n",
+        "    (& $cfgOf $priv).EnableSharing(1)\r\n",
+        "    break\r\n",
+        "  } catch {\r\n",
+        "    if ($attempt -ge 3) { throw $_.Exception.Message }\r\n",
+        "    foreach ($c in $conns) { try { (& $cfgOf $c).DisableSharing() } catch {} }\r\n",
+        "    Clear-StaleIcs\r\n",
+        "    Start-Sleep -Seconds 2\r\n",
+        "  }\r\n",
+        "}\r\n",
+    );
+    Ok(TEMPLATE.replace("__PUB__", &braced_upper(&pub_id)).replace("__PRIV__", &braced_upper(&priv_id)))
 }
 
 // ------------------------------------------------------------ live queries
@@ -416,6 +453,24 @@ mod tests {
         assert!(read_script().contains("[Console]::OutputEncoding"));
         let s = apply_script(A, H).unwrap();
         assert!(s.contains("try { $cfg.DisableSharing() } catch {}"));
+    }
+
+    /// HRESULT 0x80040201 from EnableSharing comes from stale IsIcsPublic /
+    /// IsIcsPrivate flags in root\Microsoft\HomeNet (KB 828807); the script
+    /// clears them before enabling, makes sure the ICS service runs, and
+    /// retries once after another cleanup.
+    #[test]
+    fn apply_script_clears_stale_homenet_flags_first() {
+        let s = apply_script(A, H).unwrap();
+        let cleanup = s.find("HNet_ConnectionProperties").expect("HomeNet cleanup present");
+        assert!(s.contains(r"root\Microsoft\HomeNet"));
+        assert!(s.contains("IsIcsPublic") && s.contains("IsIcsPrivate"));
+        assert!(cleanup < s.find("EnableSharing(0)").unwrap());
+        assert!(s.contains("SharedAccess"));
+        assert!(s.contains("0x80040201") || s.contains("80040201"));
+        assert!(s.matches("EnableSharing(0)").count() >= 1 && s.contains("$attempt"));
+        // Failures name the step so the error file says where it died.
+        assert!(s.contains("$step"));
     }
 
     #[test]
