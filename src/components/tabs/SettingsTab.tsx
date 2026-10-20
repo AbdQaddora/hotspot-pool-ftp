@@ -114,8 +114,8 @@ export function SettingsTab({ status, settings, hotspot, interfaces, selectedIp,
 
       <Card>
         <CardHeader
-          title="Mobile hotspot"
-          description={hotspot.supported ? "Controlled through Windows. No admin rights needed." : (hotspot.error ?? "Not automated on this OS.")}
+          title="Hotspot"
+          description={hotspot.supported ? "Our own access point (shared through Windows, one admin prompt) or Windows Mobile Hotspot." : (hotspot.error ?? "Not automated on this OS.")}
           icon={<Wifi />}
           right={
             hotspot.supported ? (
@@ -128,6 +128,12 @@ export function SettingsTab({ status, settings, hotspot, interfaces, selectedIp,
         <CardBody>
           {hotspot.supported ? (
             <>
+              <Row label="Engine" description="Access point + sharing gives devices the laptop's internet, the MyPublicWiFi way. Change while the hotspot is off.">
+                <select className={`${input} max-w-[300px]`} value={settings.hotspotEngine} disabled={busy || hotspotOn} aria-label="Hotspot engine" onChange={(e) => onSaveSettings({ ...settings, hotspotEngine: e.target.value as Settings["hotspotEngine"] })}>
+                <option value="wifidirect">Access point + Windows sharing</option>
+                <option value="mobile">Windows Mobile Hotspot</option>
+              </select>
+              </Row>
               <Row label="Manage with the Share switch" description="Turn the hotspot on when sharing starts and off again when it stops.">
                 <Switch checked={settings.autoHotspot} onCheckedChange={(v) => onSaveSettings({ ...settings, autoHotspot: v })} disabled={busy} />
               </Row>

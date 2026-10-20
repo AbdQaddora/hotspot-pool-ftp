@@ -166,6 +166,12 @@ export function WifiTab({ wifi, hotspot, settings, busy, onToggleHotspot, onSave
         <Card>
           <CardHeader title="Internet to share" description="The laptop connection devices will use." icon={<Cable />} />
           <CardBody>
+            <Row label="Hotspot engine" description={settings.hotspotEngine === "mobile" ? "Windows Mobile Hotspot; devices may get no internet." : "Own access point + Windows sharing, the MyPublicWiFi way."}>
+              <select className={`${input} max-w-[220px]`} value={settings.hotspotEngine} disabled={busy || hotspotOn} aria-label="Hotspot engine" onChange={(e) => onSaveSettings({ ...settings, hotspotEngine: e.target.value as Settings["hotspotEngine"] })}>
+                <option value="wifidirect">Access point + sharing</option>
+                <option value="mobile">Windows Mobile Hotspot</option>
+              </select>
+            </Row>
             <Row label="Connection" description={effective ? `${KIND_LABEL[effective.kind]} · ${CONN_LABEL[effective.connectivity]}` : "No connected network found."}>
               <select
                 className={`${input} max-w-[220px]`}

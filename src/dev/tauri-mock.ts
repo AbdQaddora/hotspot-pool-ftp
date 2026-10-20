@@ -150,7 +150,7 @@ async function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<
       return hotspotInfo();
     case "set_hotspot":
       hotspotOn = !!args.on;
-      log("success", "server", hotspotOn ? 'Hotspot "ABD-Laptop" is on' : "Hotspot off");
+      log("success", "server", hotspotOn ? (settings.hotspotEngine === "wifidirect" ? 'Access point "ABD-Laptop" is on' : 'Hotspot "ABD-Laptop" is on') : "Hotspot off");
       return hotspotInfo();
     case "configure_hotspot":
       return hotspotInfo();
