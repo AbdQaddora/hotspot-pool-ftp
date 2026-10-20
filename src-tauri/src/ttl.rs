@@ -12,6 +12,11 @@ use std::path::PathBuf;
 #[cfg(all(windows, feature = "ttl"))]
 use std::time::Duration;
 
+/// True when this build can actually run TTL normalization (the driver is bundled).
+pub fn available() -> bool {
+    cfg!(all(windows, feature = "ttl"))
+}
+
 /// Raise matched packets to this TTL (a normal Windows default).
 pub const TARGET_TTL: u8 = 128;
 

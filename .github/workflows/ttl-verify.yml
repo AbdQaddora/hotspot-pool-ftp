@@ -1,7 +1,7 @@
 name: TTL build check
 
-# Compiles the WinDivert TTL glue on Windows (the only place the driver is
-# fetched). Runs on the ttl-normalize branch and on demand.
+# Builds the Windows bundle with the WinDivert TTL feature (the only place the
+# driver is fetched). Runs on the ttl-normalize branch and on demand.
 on:
   push:
     branches: [ttl-normalize]
@@ -23,13 +23,29 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-      - name: Download WinDivert
+      - name: Fetch WinDivert and place the driver next to the resources
         shell: pwsh
         run: |
           Invoke-WebRequest -Uri https://github.com/basil00/WinDivert/releases/download/v2.2.2/WinDivert-2.2.2-A.zip -OutFile wd.zip
           Expand-Archive wd.zip -DestinationPath wd
-          "WINDIVERT_PATH=$PWD\wd\WinDivert-2.2.2-A\x64" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $x64 = "$PWD\wd\WinDivert-2.2.2-A\x64"
+          "WINDIVERT_PATH=$x64" | Out-File -FilePath $env:GITHUB_ENV -Append
+          New-Item -ItemType Directory -Force -Path src-tauri\windivert | Out-Null
+          Copy-Item "$x64\WinDivert.dll","$x64\WinDivert64.sys" src-tauri\windivert\
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      - name: Cargo build with the ttl feature
-        run: cargo build --manifest-path src-tauri/Cargo.toml --features ttl
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+      - name: Build the Windows bundle with TTL
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WINDIVERT_PATH: ${{ env.WINDIVERT_PATH }}
+        with:
+          args: "--features ttl"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ttl-bundle
+          path: |
+            src-tauri/target/**/release/bundle/**/*.msi
+            src-tauri/target/**/release/bundle/**/*.exe
+          if-no-files-found: ignore

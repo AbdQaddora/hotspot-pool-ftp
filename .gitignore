@@ -9,3 +9,7 @@ src-tauri/gen/schemas
 .vscode/*
 !.vscode/extensions.json
 .idea
+
+# WinDivert driver (fetched only on CI, never committed)
+/.windivert/
+/src-tauri/windivert/

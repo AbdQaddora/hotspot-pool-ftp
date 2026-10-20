@@ -38,6 +38,9 @@ pub struct Settings {
     /// and file server still run, but no Internet Connection Sharing is wired
     /// (no admin prompt), so phones get the files only.
     pub share_internet: bool,
+    /// Raise the TTL on forwarded packets (needs the WinDivert driver, admin)
+    /// so devices get internet on networks that block sharing by forcing TTL=1.
+    pub normalize_ttl: bool,
 }
 
 pub const ENGINE_WIFIDIRECT: &str = "wifidirect";
@@ -45,7 +48,7 @@ pub const ENGINE_MOBILE: &str = "mobile";
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { name: "share".into(), suffix: DEFAULT_SUFFIX.into(), auto_hotspot: true, allow_uploads: true, upload_pin: String::new(), max_upload_mb: 4096, inbox_quota_mb: 20_480, inbox_dir: None, upstream_adapter: None, hotspot_engine: ENGINE_WIFIDIRECT.into(), share_internet: true }
+        Settings { name: "share".into(), suffix: DEFAULT_SUFFIX.into(), auto_hotspot: true, allow_uploads: true, upload_pin: String::new(), max_upload_mb: 4096, inbox_quota_mb: 20_480, inbox_dir: None, upstream_adapter: None, hotspot_engine: ENGINE_WIFIDIRECT.into(), share_internet: true, normalize_ttl: false }
     }
 }
 
@@ -124,6 +127,19 @@ mod tests {
         assert_eq!(s.full_name(), "abdu.link");
         assert_eq!(Settings::validate_suffix(".Site ").unwrap(), "site");
         assert!(Settings::validate_suffix("x").is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn normalize_ttl_defaults_off_and_roundtrips() {
+        assert!(!Settings::default().normalize_ttl);
+        let dir = std::env::temp_dir().join(format!("hpf-ttl-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("settings.json"), br#"{"name":"abdu"}"#).unwrap();
+        assert!(!Settings::load(&dir).normalize_ttl);
+        let s = Settings { normalize_ttl: true, ..Settings::default() };
+        s.save(&dir).unwrap();
+        assert!(Settings::load(&dir).normalize_ttl);
         let _ = std::fs::remove_dir_all(dir);
     }
 

@@ -33,7 +33,7 @@ const ifaces = [
   { name: "Loopback Pseudo-Interface 1", ip: "127.0.0.1", isLoopback: true, isHotspot: false, score: 0, adapterId: null },
 ];
 
-let settings = { name: "abdu", suffix: "link", autoHotspot: true, allowUploads: true, uploadPin: "", maxUploadMb: 4096, inboxQuotaMb: 20480, inboxDir: null as string | null, upstreamAdapter: null as string | null, hotspotEngine: "wifidirect" as "wifidirect" | "mobile", shareInternet: true };
+let settings = { name: "abdu", suffix: "link", autoHotspot: true, allowUploads: true, uploadPin: "", maxUploadMb: 4096, inboxQuotaMb: 20480, inboxDir: null as string | null, upstreamAdapter: null as string | null, hotspotEngine: "wifidirect" as "wifidirect" | "mobile", shareInternet: true, normalizeTtl: false };
 let inbox = [
   { id: "u1", name: "IMG_2041.jpg", originalName: "IMG_2041.jpg", size: 3_400_000, device: "Abd's iPhone", ip: "192.168.137.23", receivedAt: Date.now() - 120000, sha256: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", path: "C:\\Users\\abd\\AppData\\Roaming\\com.hotspotpool.ftp\\inbox\\u1_IMG_2041.jpg", executable: false },
   { id: "u2", name: "setup_tool.exe", originalName: "setup tool.exe", size: 48_000_000, device: "Galaxy S24", ip: "192.168.137.41", receivedAt: Date.now() - 30000, sha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824", path: "C:\\Users\\abd\\AppData\\Roaming\\com.hotspotpool.ftp\\inbox\\u2_setup_tool.exe", executable: true },
@@ -163,7 +163,11 @@ async function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<
     case "get_wifi_share_status":
       return wifiStatus();
     case "get_diagnostics":
-      return "Hotspot Pool 0.10.2 (mock)\nengine: wifidirect\nhealth: not_shared\n";
+      return "Hotspot Pool (mock)\nengine: wifidirect\nhealth: not_shared\n";
+    case "get_ttl_state":
+      return { available: true, running: !!settings.normalizeTtl && running, status: null };
+    case "detect_ttl":
+      return new URLSearchParams(location.search).has("ttlblock") ? 1 : 117;
     case "apply_internet_sharing":
       await new Promise((r) => setTimeout(r, 500));
       mockShared = true;

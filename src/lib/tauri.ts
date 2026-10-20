@@ -43,6 +43,15 @@ export interface Settings {
   hotspotEngine: "wifidirect" | "mobile";
   /** Share the laptop's internet with devices. When false, the hotspot and file server run but no internet is shared (no admin prompt). */
   shareInternet: boolean;
+  /** Raise the TTL on forwarded packets so devices get internet on networks that block sharing by forcing TTL=1. Needs the driver and admin. */
+  normalizeTtl: boolean;
+}
+
+export interface TtlState {
+  /** This build bundles the driver and can normalize TTL. */
+  available: boolean;
+  running: boolean;
+  status: string | null;
 }
 
 export interface UploadItem {
@@ -189,6 +198,8 @@ export const api = {
   applyInternetSharing: () => invoke<WifiShareStatus>("apply_internet_sharing"),
   /** Plain-text support report without passwords. */
   getDiagnostics: () => invoke<string>("get_diagnostics"),
+  getTtlState: () => invoke<TtlState>("get_ttl_state"),
+  detectTtl: () => invoke<number | null>("detect_ttl"),
   autoShare: (ip?: string) => invoke<ShareResult>("auto_share", { ip: ip ?? null }),
   stopShare: (turnOffHotspot: boolean) => invoke<ShareResult>("stop_share", { turnOffHotspot }),
   getNetworkInterfaces: () => invoke<NetInterface[]>("get_network_interfaces"),

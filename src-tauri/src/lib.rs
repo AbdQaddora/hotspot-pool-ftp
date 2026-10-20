@@ -380,7 +380,29 @@ async fn hotspot_on(app: &AppHandle, engine: &Arc<ServerEngine>) -> Result<Hotsp
 }
 
 /// Turn off whichever hotspot is running.
+/// Start TTL normalization if the user enabled it and internet is being shared.
+async fn maybe_start_ttl(app: &AppHandle, engine: &Arc<ServerEngine>) {
+    let s = engine.settings();
+    if !(cfg!(windows) && s.normalize_ttl && s.share_internet) {
+        return;
+    }
+    if !ttl::available() {
+        http::emit_log(app, "warn", "server", "TTL normalization is on but this build does not include the driver.");
+        return;
+    }
+    if ttl::is_running() {
+        return;
+    }
+    http::emit_log(app, "info", "server", "Turning on TTL normalization (Windows will ask for permission)…");
+    match tauri::async_runtime::spawn_blocking(ttl::start_sidecar).await {
+        Ok(Ok(())) => http::emit_log(app, "success", "server", "TTL normalization is on; devices get internet on networks that block sharing."),
+        Ok(Err(e)) => http::emit_log(app, "warn", "server", format!("Could not start TTL normalization: {e}")),
+        Err(e) => http::emit_log(app, "warn", "server", format!("Could not start TTL normalization: {e}")),
+    }
+}
+
 async fn hotspot_off(app: &AppHandle) -> Result<HotspotInfo, String> {
+    ttl::signal_stop();
     if wfd::info().running {
         http::emit_log(app, "info", "server", "Stopping the access point…");
         tauri::async_runtime::spawn_blocking(wfd::stop).await.map_err(|e| e.to_string())?;
@@ -417,6 +439,28 @@ async fn get_wifi_share_status(engine: State<'_, Arc<ServerEngine>>, fresh: bool
 }
 
 /// Plain-text support report (no passwords): status snapshot + Wi-Fi Direct adapters.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TtlState {
+    /// This build bundles the driver and can normalize TTL.
+    available: bool,
+    /// A sidecar is currently rewriting TTL.
+    running: bool,
+    /// Last sidecar status/error line.
+    status: Option<String>,
+}
+
+#[tauri::command]
+fn get_ttl_state() -> TtlState {
+    TtlState { available: ttl::available(), running: ttl::is_running(), status: ttl::status() }
+}
+
+/// Ping a public address and return the reply TTL; 1 means the network blocks sharing.
+#[tauri::command]
+async fn detect_ttl() -> Option<u8> {
+    tauri::async_runtime::spawn_blocking(|| ttl::measure_reply_ttl("8.8.8.8")).await.unwrap_or(None)
+}
+
 #[tauri::command]
 async fn get_diagnostics(engine: State<'_, Arc<ServerEngine>>) -> Result<String, String> {
     let settings = engine.settings();
@@ -517,12 +561,16 @@ async fn auto_share(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, ip: Op
     } else {
         engine.verify_name(&app).await
     };
+    if info.state == "on" {
+        maybe_start_ttl(&app, engine.inner()).await;
+    }
     Ok(ShareResult { hotspot: info, status, hotspot_started })
 }
 
 /// Stop the server and optionally turn the hotspot off again.
 #[tauri::command]
 async fn stop_share(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, turn_off_hotspot: bool) -> Result<ShareResult, String> {
+    ttl::signal_stop();
     let status = engine.stop(app.clone()).await;
     let hotspot = if turn_off_hotspot {
         match hotspot_off(&app).await {
@@ -592,6 +640,8 @@ pub fn run() {
             configure_hotspot,
             hotspot_settings_url,
             get_wifi_share_status,
+            get_ttl_state,
+            detect_ttl,
             get_diagnostics,
             apply_internet_sharing,
             auto_share,
@@ -616,6 +666,7 @@ pub fn run() {
                 });
                 // Unlike Mobile Hotspot, our access point lives in this process.
                 wfd::stop();
+                ttl::signal_stop();
             }
         })
         .run(tauri::generate_context!())

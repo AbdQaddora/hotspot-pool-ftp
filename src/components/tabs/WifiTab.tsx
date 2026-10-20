@@ -2,12 +2,13 @@ import { QRCodeSVG } from "qrcode.react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { AlertTriangle, Cable, Check, CheckCircle2, ClipboardList, Copy, ExternalLink, Eye, EyeOff, Globe, Loader2, LogIn, Power, RefreshCw, RotateCcw, Smartphone, Wifi, Wrench } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader, PageHeader, Row } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import { api, wifiQr, type HotspotInfo, type LogEvent, type Settings, type Upstream, type WifiHealth, type WifiShareStatus } from "@/lib/tauri";
+import { api, wifiQr, type HotspotInfo, type LogEvent, type Settings, type TtlState, type Upstream, type WifiHealth, type WifiShareStatus } from "@/lib/tauri";
 import type { useWifiShare } from "@/hooks/useWifiShare";
 
 interface Props {
@@ -78,6 +79,17 @@ export function healthCopy(health: Shown, s: WifiShareStatus | null): { title: s
 export function WifiTab({ wifi, hotspot, settings, busy, logs, onToggleHotspot, onRestartHotspot, onSaveSettings, onOpenHotspotSettings }: Props) {
   const [showPass, setShowPass] = useState(false);
   const [copiedDiag, setCopiedDiag] = useState(false);
+  const [ttl, setTtl] = useState<TtlState | null>(null);
+  const [replyTtl, setReplyTtl] = useState<number | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api.getTtlState().then((t) => alive && setTtl(t)).catch(() => {});
+    api.detectTtl().then((n) => alive && setReplyTtl(n)).catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [wifi.status?.health]);
+  const ttlBlocked = replyTtl === 1;
   const copyDiagnostics = async () => {
     let text: string;
     try {
@@ -223,6 +235,13 @@ export function WifiTab({ wifi, hotspot, settings, busy, logs, onToggleHotspot, 
             <Row label="Hotspot adapter" description="The private side of the share, created by Windows when the hotspot starts.">
               <span className="truncate font-mono text-[12px] text-muted-foreground">{s?.hotspotAdapter?.name ?? "—"}</span>
             </Row>
+            {ttl?.available && (
+              <Row label="Get past sharing blocks (TTL)" description={ttlBlocked ? "This network forces TTL to 1 to block sharing. Turn this on so devices get internet." : "For networks that block sharing by forcing TTL to 1. Needs one admin prompt; leave off otherwise."}>
+                {ttlBlocked && !settings.normalizeTtl && <Badge variant="warn"><AlertTriangle className="size-3" /> blocked</Badge>}
+                {ttl.running && <Badge variant="live">on</Badge>}
+                <Switch checked={settings.normalizeTtl} onCheckedChange={(v) => onSaveSettings({ ...settings, normalizeTtl: v })} disabled={busy} aria-label="Normalize TTL" />
+              </Row>
+            )}
             <p className="mt-3 text-[12px] leading-snug text-muted-foreground">Devices appear to the network as the laptop, so a sign-in that only admits one device covers all of them.</p>
           </CardBody>
         </Card>
