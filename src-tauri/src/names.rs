@@ -51,6 +51,15 @@ pub fn rewrite_hosts(contents: &str, name: &str, ip: Ipv4Addr) -> String {
     s
 }
 
+/// Elevated script body that installs the new hosts file and flushes DNS.
+pub fn hosts_script(payload: &str, hosts_path: &str) -> String {
+    format!(
+        "Copy-Item -LiteralPath {} -Destination {} -Force\r\nipconfig /flushdns | Out-Null\r\n",
+        crate::elevate::ps_quote(payload),
+        crate::elevate::ps_quote(hosts_path)
+    )
+}
+
 /// Make sure the hosts file maps `name` to `ip`. Returns true when it had to
 /// write (after a UAC prompt on Windows).
 pub fn ensure_hosts_entry(name: &str, ip: Ipv4Addr) -> Result<bool, String> {
@@ -65,11 +74,7 @@ pub fn ensure_hosts_entry(name: &str, ip: Ipv4Addr) -> Result<bool, String> {
         let payload = std::env::temp_dir().join("hotspot-pool").join("hosts.new");
         std::fs::create_dir_all(payload.parent().unwrap()).map_err(|e| e.to_string())?;
         std::fs::write(&payload, new_contents.as_bytes()).map_err(|e| e.to_string())?;
-        let script = format!(
-            "$ErrorActionPreference = 'Stop'\r\nCopy-Item -LiteralPath {} -Destination {} -Force\r\nipconfig /flushdns | Out-Null\r\n",
-            crate::elevate::ps_quote(&payload.display().to_string()),
-            crate::elevate::ps_quote(&path.display().to_string())
-        );
+        let script = hosts_script(&payload.display().to_string(), &path.display().to_string());
         crate::elevate::run_elevated("apply-hosts.ps1", &script).map_err(|e| {
             if e.contains("cancelled") {
                 "Windows needs permission to add the name to the hosts file. The prompt was cancelled; phones can still use the IP link.".to_string()

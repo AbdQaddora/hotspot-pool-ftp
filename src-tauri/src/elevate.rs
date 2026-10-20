@@ -175,7 +175,7 @@ mod tests {
         assert!(body.contains("catch {"));
         assert!(body.contains("'C:\\t\\apply.err'"));
         assert!(body.contains("exit 1"));
-        assert!(body.contains("$step: "));
+        assert!(body.contains("${step}: "));
         let launch = launcher_command("C:\\t\\apply.ps1");
         assert!(launch.contains("-PassThru"));
         assert!(launch.contains("exit $p.ExitCode"));
@@ -200,6 +200,42 @@ mod tests {
         let out = wait_with_timeout(&mut fast, std::time::Duration::from_secs(5)).unwrap();
         assert!(out.status.success());
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hi");
+    }
+
+    /// Every PowerShell script the app generates must at least parse. Needs
+    /// `pwsh` (PowerShell 7) on PATH or in HPF_PWSH; skipped otherwise.
+    #[test]
+    fn generated_powershell_parses() {
+        let pwsh = std::env::var("HPF_PWSH").ok().unwrap_or_else(|| "pwsh".into());
+        if std::process::Command::new(&pwsh).arg("-v").output().is_err() {
+            eprintln!("pwsh not available; skipping parse check");
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("hpf-ps-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let scripts: Vec<(&str, String)> = vec![
+            ("apply-ics.ps1", wrap_elevated_body(&crate::ics::apply_script("abcdef01-1234-5678-9abc-def012345678", "99999999-8888-7777-6666-555555555555").unwrap(), "C:\\t\\apply-ics.ps1.err")),
+            ("apply-hosts.ps1", wrap_elevated_body(&crate::names::hosts_script("C:\\t\\hosts.new", "C:\\Windows\\System32\\drivers\\etc\\hosts"), "C:\\t\\apply-hosts.ps1.err")),
+            ("read-ics.ps1", crate::ics::read_script().to_string()),
+            ("wfd-adapters.ps1", crate::wfd::go_adapter_script().to_string()),
+            ("launcher.ps1", launcher_command("C:\\t\\apply-ics.ps1")),
+        ];
+        let mut problems = Vec::new();
+        for (name, body) in scripts {
+            let path = dir.join(name);
+            std::fs::write(&path, &body).unwrap();
+            let check = format!(
+                "$t = $null; $e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile('{}', [ref]$t, [ref]$e); if ($e) {{ $e | ForEach-Object {{ \"$($_.Extent.StartLineNumber): $($_.Message)\" }} }}",
+                path.display()
+            );
+            let out = std::process::Command::new(&pwsh).args(["-NoProfile", "-Command", &check]).output().unwrap();
+            let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !text.is_empty() {
+                problems.push(format!("{name}: {text}"));
+            }
+        }
+        let _ = std::fs::remove_dir_all(dir);
+        assert!(problems.is_empty(), "PowerShell parse errors:\n{}", problems.join("\n"));
     }
 
     #[test]
