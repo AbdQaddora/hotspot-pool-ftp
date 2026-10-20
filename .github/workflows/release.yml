@@ -12,7 +12,7 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            args: ""
+            args: "--features ttl"
           - os: macos-latest
             args: "--target universal-apple-darwin"
           - os: ubuntu-22.04
@@ -52,10 +52,22 @@ jobs:
         if: matrix.os == 'ubuntu-22.04'
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+      - name: Fetch WinDivert driver (Windows TTL feature)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://github.com/basil00/WinDivert/releases/download/v2.2.2/WinDivert-2.2.2-A.zip -OutFile wd.zip
+          Expand-Archive wd.zip -DestinationPath wd
+          $x64 = "$PWD\wd\WinDivert-2.2.2-A\x64"
+          "WINDIVERT_PATH=$x64" | Out-File -FilePath $env:GITHUB_ENV -Append
+          New-Item -ItemType Directory -Force -Path src-tauri\windivert | Out-Null
+          Copy-Item "$x64\WinDivert.dll","$x64\WinDivert64.sys" src-tauri\windivert\
+
       - name: Build bundles
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WINDIVERT_PATH: ${{ env.WINDIVERT_PATH }}
         with:
           args: ${{ matrix.args }}
 
