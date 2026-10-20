@@ -9,7 +9,7 @@ const idleStats: StatsEvent = { speedBps: 0, peakBps: 0, connected: 0, activeTra
 
 export function useServer() {
   const [status, setStatus] = useState<ServerStatus>({ running: false, ip: null, port: null, url: null, name: null, nameUrl: null, nameResolves: null, hostnameUrl: null });
-  const [settings, setSettingsState] = useState<Settings>({ name: "share", suffix: "link", autoHotspot: true, allowUploads: true, uploadPin: "", maxUploadMb: 4096, inboxQuotaMb: 20480, inboxDir: null, upstreamAdapter: null });
+  const [settings, setSettingsState] = useState<Settings>({ name: "share", suffix: "link", autoHotspot: true, allowUploads: true, uploadPin: "", maxUploadMb: 4096, inboxQuotaMb: 20480, inboxDir: null, upstreamAdapter: null, hotspotEngine: "wifidirect" });
   const [nameBusy, setNameBusy] = useState(false);
   const [stats, setStats] = useState<StatsEvent>(idleStats);
   const [history, setHistory] = useState<number[]>(() => Array(SPARK_POINTS).fill(0));

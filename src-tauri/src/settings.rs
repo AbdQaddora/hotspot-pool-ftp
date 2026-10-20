@@ -30,17 +30,32 @@ pub struct Settings {
     /// Adapter GUID (lowercase, no braces) of the connection to share with
     /// the hotspot; None = whatever Windows treats as the internet connection.
     pub upstream_adapter: Option<String>,
+    /// How the hotspot is created: `wifidirect` (our own Wi-Fi Direct access
+    /// point + Windows Internet Connection Sharing, the MyPublicWiFi way) or
+    /// `mobile` (Windows Mobile Hotspot).
+    pub hotspot_engine: String,
 }
+
+pub const ENGINE_WIFIDIRECT: &str = "wifidirect";
+pub const ENGINE_MOBILE: &str = "mobile";
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { name: "share".into(), suffix: DEFAULT_SUFFIX.into(), auto_hotspot: true, allow_uploads: true, upload_pin: String::new(), max_upload_mb: 4096, inbox_quota_mb: 20_480, inbox_dir: None, upstream_adapter: None }
+        Settings { name: "share".into(), suffix: DEFAULT_SUFFIX.into(), auto_hotspot: true, allow_uploads: true, upload_pin: String::new(), max_upload_mb: 4096, inbox_quota_mb: 20_480, inbox_dir: None, upstream_adapter: None, hotspot_engine: ENGINE_WIFIDIRECT.into() }
     }
 }
 
 impl Settings {
     pub fn full_name(&self) -> String {
         format!("{}.{}", self.name, self.suffix)
+    }
+
+    pub fn validate_engine(engine: &str) -> Result<String, String> {
+        match engine.trim().to_ascii_lowercase().as_str() {
+            ENGINE_WIFIDIRECT => Ok(ENGINE_WIFIDIRECT.into()),
+            ENGINE_MOBILE => Ok(ENGINE_MOBILE.into()),
+            _ => Err("Unknown hotspot engine.".into()),
+        }
     }
 
     pub fn validate_suffix(suffix: &str) -> Result<String, String> {
@@ -67,10 +82,12 @@ impl Settings {
     }
 
     pub fn load(dir: &Path) -> Settings {
-        std::fs::read(dir.join("settings.json"))
+        let mut s: Settings = std::fs::read(dir.join("settings.json"))
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        s.hotspot_engine = Settings::validate_engine(&s.hotspot_engine).unwrap_or_else(|_| ENGINE_WIFIDIRECT.into());
+        s
     }
 
     pub fn save(&self, dir: &Path) -> Result<(), String> {
@@ -103,6 +120,23 @@ mod tests {
         assert_eq!(s.full_name(), "abdu.link");
         assert_eq!(Settings::validate_suffix(".Site ").unwrap(), "site");
         assert!(Settings::validate_suffix("x").is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn engine_defaults_and_validation() {
+        assert_eq!(Settings::default().hotspot_engine, "wifidirect");
+        let dir = std::env::temp_dir().join(format!("hpf-engine-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("settings.json"), br#"{"name":"abdu"}"#).unwrap();
+        assert_eq!(Settings::load(&dir).hotspot_engine, "wifidirect");
+        std::fs::write(dir.join("settings.json"), br#"{"name":"abdu","hotspotEngine":"bogus"}"#).unwrap();
+        assert_eq!(Settings::load(&dir).hotspot_engine, "wifidirect");
+        std::fs::write(dir.join("settings.json"), br#"{"name":"abdu","hotspotEngine":"mobile"}"#).unwrap();
+        assert_eq!(Settings::load(&dir).hotspot_engine, "mobile");
+        assert_eq!(Settings::validate_engine(" Mobile ").unwrap(), "mobile");
+        assert_eq!(Settings::validate_engine("wifidirect").unwrap(), "wifidirect");
+        assert!(Settings::validate_engine("x").is_err());
         let _ = std::fs::remove_dir_all(dir);
     }
 

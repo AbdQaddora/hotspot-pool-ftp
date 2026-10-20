@@ -39,6 +39,8 @@ export interface Settings {
   inboxDir: string | null;
   /** Adapter id of the connection shared with the hotspot; null = automatic. */
   upstreamAdapter: string | null;
+  /** "wifidirect" = own access point + Windows sharing (MyPublicWiFi's way); "mobile" = Windows Mobile Hotspot. */
+  hotspotEngine: "wifidirect" | "mobile";
 }
 
 export interface UploadItem {

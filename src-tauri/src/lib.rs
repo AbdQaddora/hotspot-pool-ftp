@@ -138,7 +138,8 @@ async fn set_settings(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, sett
         Some(id) => Some(ics::norm_guid(id).ok_or_else(|| "Pick a connection from the list.".to_string())?),
         None => None,
     };
-    let next = Settings { name, suffix, upload_pin, max_upload_mb, inbox_quota_mb, inbox_dir: inbox_dir.clone(), upstream_adapter, ..settings };
+    let hotspot_engine = Settings::validate_engine(&settings.hotspot_engine)?;
+    let next = Settings { name, suffix, upload_pin, max_upload_mb, inbox_quota_mb, inbox_dir: inbox_dir.clone(), upstream_adapter, hotspot_engine, ..settings };
     next.save(&config_dir(&app)?)?;
     engine.uploads().set_inbox_dir(inbox_dir.map(std::path::PathBuf::from).unwrap_or_else(|| default_inbox_dir(&app)));
     let _ = engine.uploads().ensure_dirs();
