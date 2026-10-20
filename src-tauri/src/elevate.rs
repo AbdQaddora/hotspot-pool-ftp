@@ -124,6 +124,26 @@ pub fn run_hidden(body: &str) -> Result<String, String> {
     }
 }
 
+/// Launch `exe` elevated and detached (one UAC prompt), passing `args`.
+#[cfg(windows)]
+pub fn run_exe_elevated(exe: &str, args: &[&str]) -> Result<(), String> {
+    let arglist = if args.is_empty() {
+        "@()".to_string()
+    } else {
+        args.iter().map(|a| ps_quote(a)).collect::<Vec<_>>().join(",")
+    };
+    let cmd = format!("Start-Process -FilePath {} -Verb RunAs -WindowStyle Hidden -ArgumentList {}", ps_quote(exe), arglist);
+    let out = powershell(&["-Command", &cmd], Duration::from_secs(120))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        if err.contains("canceled") || err.contains("cancelled") || err.contains("1223") {
+            return Err("The Windows permission prompt was cancelled.".into());
+        }
+        return Err(first_line(&err));
+    }
+    Ok(())
+}
+
 /// Write `body` to `%TEMP%\hotspot-pool\<script_name>` and run it elevated
 /// (one UAC prompt), waiting for it to finish. Errors raised inside the
 /// elevated script come back as the Err message.

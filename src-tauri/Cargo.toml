@@ -10,6 +10,10 @@ license = "MIT"
 name = "hotspot_pool_ftp_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# TTL normalization needs the WinDivert driver; enabled only in CI where it can be bundled.
+ttl = ["dep:windivert"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -44,6 +48,7 @@ windows = { version = "0.62", features = [
   "Security_Credentials",
   "Win32_System_WinRT",
 ] }
+windivert = { version = "0.6", optional = true }
 
 [profile.release]
 codegen-units = 1

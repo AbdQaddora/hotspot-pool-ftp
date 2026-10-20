@@ -6,6 +6,7 @@ mod names;
 mod network;
 mod pool;
 mod settings;
+pub mod ttl;
 mod ttlfix;
 mod uploads;
 mod vpath;
