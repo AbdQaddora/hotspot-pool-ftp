@@ -39,6 +39,9 @@ windows = { version = "0.62", features = [
   "Foundation_Collections",
   "Networking_Connectivity",
   "Networking_NetworkOperators",
+  "Devices_WiFiDirect",
+  "Devices_Enumeration",
+  "Security_Credentials",
   "Win32_System_WinRT",
 ] }
 

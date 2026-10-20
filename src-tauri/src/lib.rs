@@ -8,6 +8,7 @@ mod pool;
 mod settings;
 mod uploads;
 mod vpath;
+mod wfd;
 
 use hotspot::HotspotInfo;
 use http::{ServerEngine, ServerStatus};

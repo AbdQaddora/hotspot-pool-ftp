@@ -65,7 +65,7 @@ mod imp {
         NetworkOperatorTetheringAccessPointConfiguration, NetworkOperatorTetheringManager, TetheringOperationStatus, TetheringOperationalState,
     };
 
-    fn init_apartment() {
+    pub(super) fn init_apartment() {
         use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED};
         // Safe to call repeatedly; errors (already initialised in another mode) are ignored.
         unsafe {
@@ -207,6 +207,12 @@ mod imp {
     pub fn configure(_ssid: &str, _passphrase: &str) -> Result<HotspotInfo, String> {
         Err(REASON.to_string())
     }
+}
+
+/// Initialise the WinRT apartment on the current thread (safe to repeat).
+#[cfg(windows)]
+pub(crate) fn init_apartment() {
+    imp::init_apartment()
 }
 
 /// Blocking calls; run them on a blocking thread.
