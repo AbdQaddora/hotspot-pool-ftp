@@ -92,7 +92,7 @@ export function WifiTab({ wifi, hotspot, settings, busy, logs, onToggleHotspot, 
     return () => {
       alive = false;
     };
-  }, [wifi.status?.running]);
+  }, [wifi.status?.health]);
   const ttlBlocked = replyTtl === 1;
   const copyDiagnostics = async () => {
     let text: string;
