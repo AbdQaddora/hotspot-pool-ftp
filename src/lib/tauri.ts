@@ -41,6 +41,8 @@ export interface Settings {
   upstreamAdapter: string | null;
   /** "wifidirect" = own access point + Windows sharing (MyPublicWiFi's way); "mobile" = Windows Mobile Hotspot. */
   hotspotEngine: "wifidirect" | "mobile";
+  /** Share the laptop's internet with devices. When false, the hotspot and file server run but no internet is shared (no admin prompt). */
+  shareInternet: boolean;
 }
 
 export interface UploadItem {

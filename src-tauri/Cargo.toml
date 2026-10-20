@@ -1,6 +1,6 @@
 [package]
 name = "hotspot-pool-ftp"
-version = "0.10.3"
+version = "0.11.0"
 description = "Share files with phones over your laptop's Wi-Fi hotspot"
 authors = ["AbdQaddora"]
 edition = "2021"

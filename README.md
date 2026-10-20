@@ -34,6 +34,10 @@ The hotspot name and password are shown in Settings and can be edited there.
 
 **Share name (`<name>.<ending>`).** Pick the label and ending in the sidebar (default `share.link`). The ending must be a **real top-level domain** (`link`, `site`, `net`, …): phone browsers only open typed text as an address when it ends in one they know, otherwise they search the web for it. On a Windows hotspot the ICS DNS proxy resolves through the laptop's own resolver, so the app adds `192.168.137.1 <name>.<ending>` to the Windows hosts file (one UAC prompt, only when the name changes) and verifies with a real DNS query to the gateway before showing the name as the main link. The server is plain HTTP on port 80 (8080/8081 fallback); there is deliberately no HTTPS, since a self-signed certificate would make every phone show a warning.
 
+## Sharing files without internet
+
+The Share tab has a **Share internet** switch. Turn it off to run the hotspot and the file server without wiring Internet Connection Sharing: phones join, open the page and download files, but do not get the laptop's internet, and there is no admin prompt. This works with the access point engine; Windows Mobile Hotspot always shares internet, so for files-only use the access point engine.
+
 ## Share Wi-Fi (internet for devices)
 
 The **Share Wi-Fi** tab gives every device on the hotspot the laptop's internet, the way MyPublicWiFi's *Internet Connection Sharing* mode does. It is for networks that only admit one device, such as a captive portal with a voucher login: the laptop signs in, and the phones behind its hotspot ride on that login because they appear to the network as the laptop.

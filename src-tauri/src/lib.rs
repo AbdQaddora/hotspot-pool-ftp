@@ -244,7 +244,7 @@ async fn get_hotspot_info() -> HotspotInfo {
 /// MyPublicWiFi does it: Mobile Hotspot off, Wi-Fi Direct AP on with the same
 /// SSID/password, ICS from the upstream to the AP's adapter, then wait for
 /// Windows to give the adapter 192.168.137.1.
-async fn wifidirect_on(app: &AppHandle, preferred: Option<String>) -> Result<HotspotInfo, wfd::StartFail> {
+async fn wifidirect_on(app: &AppHandle, preferred: Option<String>, share_internet: bool) -> Result<HotspotInfo, wfd::StartFail> {
     use wfd::StartFail::{AfterAp, ApStart};
     fn join<E: std::fmt::Display>(e: E) -> wfd::StartFail {
         wfd::StartFail::ApStart(e.to_string())
@@ -284,6 +284,12 @@ async fn wifidirect_on(app: &AppHandle, preferred: Option<String>) -> Result<Hot
         }
     }
     http::emit_log(app, "success", "server", format!("Access point \"{ssid}\" is on"));
+
+    if !share_internet {
+        // Files only: no ICS, so no admin prompt. Windows gives the group-owner adapter its own address.
+        http::emit_log(app, "info", "server", "Internet sharing is off; sharing files only (no internet for devices).");
+        return tauri::async_runtime::spawn_blocking(hotspot::info).await.map_err(|e| ApStart(e.to_string()));
+    }
 
     // Windows brings the group-owner adapter up a moment after the AP starts.
     let mut adapter = None;
@@ -339,8 +345,9 @@ async fn wifidirect_on(app: &AppHandle, preferred: Option<String>) -> Result<Hot
 async fn hotspot_on(app: &AppHandle, engine: &Arc<ServerEngine>) -> Result<HotspotInfo, String> {
     let settings = engine.settings();
     let preferred = settings.upstream_adapter.clone();
+    let share_internet = settings.share_internet;
     if settings.hotspot_engine == settings::ENGINE_WIFIDIRECT && cfg!(windows) {
-        match wifidirect_on(app, preferred.clone()).await {
+        match wifidirect_on(app, preferred.clone(), share_internet).await {
             Ok(info) => {
                 wfd::set_last_failure(None);
                 return Ok(info);
@@ -360,6 +367,9 @@ async fn hotspot_on(app: &AppHandle, engine: &Arc<ServerEngine>) -> Result<Hotsp
     if let Some(public) = shared.public_id.as_deref() {
         let name = shared.connections.iter().find(|c| c.id == public).map(|c| c.name.clone()).unwrap_or_else(|| "a connection".into());
         http::emit_log(app, "warn", "server", format!("Internet Connection Sharing is still enabled on {name}; Windows Mobile Hotspot may refuse to share internet while it is. Turn sharing off in Network Connections if phones get no internet."));
+    }
+    if !share_internet {
+        http::emit_log(app, "warn", "server", "Windows Mobile Hotspot always shares internet; to share files only, use the access point engine in Settings.");
     }
     http::emit_log(app, "info", "server", "Turning on Mobile Hotspot…");
     let info = tauri::async_runtime::spawn_blocking(move || hotspot::set_enabled(true, preferred.as_deref())).await.map_err(|e| e.to_string())??;

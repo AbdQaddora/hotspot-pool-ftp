@@ -34,6 +34,10 @@ pub struct Settings {
     /// point + Windows Internet Connection Sharing, the MyPublicWiFi way) or
     /// `mobile` (Windows Mobile Hotspot).
     pub hotspot_engine: String,
+    /// Share the laptop's internet with the devices. When false, the hotspot
+    /// and file server still run, but no Internet Connection Sharing is wired
+    /// (no admin prompt), so phones get the files only.
+    pub share_internet: bool,
 }
 
 pub const ENGINE_WIFIDIRECT: &str = "wifidirect";
@@ -41,7 +45,7 @@ pub const ENGINE_MOBILE: &str = "mobile";
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { name: "share".into(), suffix: DEFAULT_SUFFIX.into(), auto_hotspot: true, allow_uploads: true, upload_pin: String::new(), max_upload_mb: 4096, inbox_quota_mb: 20_480, inbox_dir: None, upstream_adapter: None, hotspot_engine: ENGINE_WIFIDIRECT.into() }
+        Settings { name: "share".into(), suffix: DEFAULT_SUFFIX.into(), auto_hotspot: true, allow_uploads: true, upload_pin: String::new(), max_upload_mb: 4096, inbox_quota_mb: 20_480, inbox_dir: None, upstream_adapter: None, hotspot_engine: ENGINE_WIFIDIRECT.into(), share_internet: true }
     }
 }
 
@@ -120,6 +124,19 @@ mod tests {
         assert_eq!(s.full_name(), "abdu.link");
         assert_eq!(Settings::validate_suffix(".Site ").unwrap(), "site");
         assert!(Settings::validate_suffix("x").is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn share_internet_defaults_on_and_roundtrips() {
+        assert!(Settings::default().share_internet);
+        let dir = std::env::temp_dir().join(format!("hpf-shareint-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("settings.json"), br#"{"name":"abdu"}"#).unwrap();
+        assert!(Settings::load(&dir).share_internet);
+        let s = Settings { share_internet: false, ..Settings::default() };
+        s.save(&dir).unwrap();
+        assert!(!Settings::load(&dir).share_internet);
         let _ = std::fs::remove_dir_all(dir);
     }
 

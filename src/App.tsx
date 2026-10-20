@@ -69,6 +69,7 @@ export default function App() {
                     onSetupName={server.setupName}
                     onCheckName={server.checkName}
                     onGoSettings={() => setTab("settings")}
+                    onSaveSettings={server.saveSettings}
                   />
                 )}
                 {tab === "wifi" && (

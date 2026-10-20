@@ -1,11 +1,12 @@
 import { QRCodeSVG } from "qrcode.react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { AlertTriangle, Check, CheckCircle2, Copy, ExternalLink, Eye, EyeOff, Loader2, Power, RefreshCw, Smartphone, Wifi } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle2, Copy, ExternalLink, Eye, EyeOff, Globe, Loader2, Power, RefreshCw, Smartphone, Wifi } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader, PageHeader } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { wifiQr, type HotspotInfo, type ServerStatus, type Settings } from "@/lib/tauri";
 
@@ -20,6 +21,7 @@ interface Props {
   onSetupName: () => void;
   onCheckName: () => void;
   onGoSettings: () => void;
+  onSaveSettings: (s: Settings) => Promise<boolean>;
 }
 
 function CopyBtn({ value, label, size = "xs" }: { value: string | null; label: string; size?: "xs" | "sm" }) {
@@ -42,7 +44,7 @@ function CopyBtn({ value, label, size = "xs" }: { value: string | null; label: s
   );
 }
 
-export function ShareTab({ status, hotspot, settings, busy, phase, nameBusy, onToggle, onSetupName, onCheckName, onGoSettings }: Props) {
+export function ShareTab({ status, hotspot, settings, busy, phase, nameBusy, onToggle, onSetupName, onCheckName, onGoSettings, onSaveSettings }: Props) {
   const [showPass, setShowPass] = useState(false);
   const hotspotOn = hotspot.state === "on";
   const nameOk = status.running && status.nameResolves === true;
@@ -109,6 +111,11 @@ export function ShareTab({ status, hotspot, settings, busy, phase, nameBusy, onT
               <Button size="xs" variant="ghost" onClick={onCheckName} disabled={nameBusy} aria-label="Check again"><RefreshCw /></Button>
             </span>
           )}
+          <span className="flex items-center gap-2 text-muted-foreground">
+            <Globe className="size-3.5" /> Share internet
+            <Switch checked={settings.shareInternet} onCheckedChange={(v) => onSaveSettings({ ...settings, shareInternet: v })} disabled={busy || status.running} aria-label="Share internet with devices" />
+            {!settings.shareInternet && <Badge variant="outline">Files only</Badge>}
+          </span>
           <span className="ml-auto flex items-center gap-1 text-muted-foreground">
             IP <span className="font-mono text-foreground">{status.ip ?? "—"}</span>
             <CopyBtn value={status.url} label="Copy IP link" />

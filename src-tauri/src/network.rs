@@ -26,8 +26,10 @@ pub struct NetInterface {
     pub adapter_id: Option<String>,
 }
 
-const KNOWN_HOTSPOT_IPS: [Ipv4Addr; 3] = [
+const KNOWN_HOTSPOT_IPS: [Ipv4Addr; 4] = [
     Ipv4Addr::new(192, 168, 137, 1),
+    // Wi-Fi Direct group owner's own subnet, used when the access point runs without ICS.
+    Ipv4Addr::new(192, 168, 49, 1),
     Ipv4Addr::new(192, 168, 2, 1),
     Ipv4Addr::new(10, 42, 0, 1),
 ];
@@ -101,6 +103,11 @@ mod tests {
     #[test]
     fn loopback_scores_zero() {
         assert_eq!(score_interface("lo", Ipv4Addr::LOCALHOST), 0);
+    }
+
+    #[test]
+    fn wifi_direct_group_owner_ip_is_a_hotspot() {
+        assert_eq!(score_interface("Local Area Connection* 3", Ipv4Addr::new(192, 168, 49, 1)), 100);
     }
 
     #[test]
