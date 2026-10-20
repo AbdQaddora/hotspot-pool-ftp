@@ -34,6 +34,12 @@ The hotspot name and password are shown in Settings and can be edited there.
 
 **Share name (`<name>.<ending>`).** Pick the label and ending in the sidebar (default `share.link`). The ending must be a **real top-level domain** (`link`, `site`, `net`, …): phone browsers only open typed text as an address when it ends in one they know, otherwise they search the web for it. On a Windows hotspot the ICS DNS proxy resolves through the laptop's own resolver, so the app adds `192.168.137.1 <name>.<ending>` to the Windows hosts file (one UAC prompt, only when the name changes) and verifies with a real DNS query to the gateway before showing the name as the main link. The server is plain HTTP on port 80 (8080/8081 fallback); there is deliberately no HTTPS, since a self-signed certificate would make every phone show a warning.
 
+## Getting past sharing blocks (TTL)
+
+Some networks block tethering by forcing the TTL of the traffic they hand your laptop down to 1, so the moment the laptop forwards a packet to a phone it dies and the phone shows "connected, no internet" even though the laptop is online. You can tell: run `ping -n 1 8.8.8.8` on the laptop; a reply `TTL=1` is the block.
+
+The Share Wi-Fi tab has a **Get past sharing blocks (TTL)** switch (Windows only, off by default). Turn it on and the app runs a small elevated helper that raises the TTL on the forwarded packets before the laptop sends them on, so devices get internet again. This is the same approach MyPublicWiFi's Router Mode uses. It needs one admin prompt. The helper uses the signed, open-source [WinDivert](https://reqrypt.org/windivert.html) driver, which is fetched only on the build server and bundled into the Windows installer; some antivirus products flag WinDivert as a hacking tool and may block it.
+
 ## Sharing files without internet
 
 The Share tab has a **Share internet** switch. Turn it off to run the hotspot and the file server without wiring Internet Connection Sharing: phones join, open the page and download files, but do not get the laptop's internet, and there is no admin prompt. This works with the access point engine; Windows Mobile Hotspot always shares internet, so for files-only use the access point engine.
