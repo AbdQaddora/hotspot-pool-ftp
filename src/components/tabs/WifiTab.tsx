@@ -83,12 +83,16 @@ export function WifiTab({ wifi, hotspot, settings, busy, logs, onToggleHotspot, 
   const [replyTtl, setReplyTtl] = useState<number | null>(null);
   useEffect(() => {
     let alive = true;
-    api.getTtlState().then((t) => alive && setTtl(t)).catch(() => {});
-    api.detectTtl().then((n) => alive && setReplyTtl(n)).catch(() => {});
+    api.getTtlState().then((t) => {
+      if (!alive) return;
+      setTtl(t);
+      // Only measure the reply TTL on builds that can act on it.
+      if (t.available) api.detectTtl().then((n) => alive && setReplyTtl(n)).catch(() => {});
+    }).catch(() => {});
     return () => {
       alive = false;
     };
-  }, [wifi.status?.health]);
+  }, [wifi.status?.running]);
   const ttlBlocked = replyTtl === 1;
   const copyDiagnostics = async () => {
     let text: string;

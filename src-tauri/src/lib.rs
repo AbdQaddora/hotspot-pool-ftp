@@ -146,6 +146,7 @@ async fn set_settings(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, sett
     next.save(&config_dir(&app)?)?;
     engine.uploads().set_inbox_dir(inbox_dir.map(std::path::PathBuf::from).unwrap_or_else(|| default_inbox_dir(&app)));
     let _ = engine.uploads().ensure_dirs();
+    let ttl_was_on = engine.settings().normalize_ttl;
     let name_changed = engine.set_settings(next.clone());
     if engine.status().running {
         if name_changed {
@@ -154,6 +155,13 @@ async fn set_settings(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, sett
             }
         } else {
             let _ = app.emit(http::EV_STATUS, engine.status());
+        }
+        // Let the TTL toggle take effect without restarting the share.
+        if next.normalize_ttl && !ttl_was_on {
+            maybe_start_ttl(&app, engine.inner()).await;
+        } else if !next.normalize_ttl && ttl_was_on {
+            ttl::signal_stop();
+            http::emit_log(&app, "info", "server", "TTL normalization turned off.");
         }
     }
     Ok(next)
@@ -383,7 +391,8 @@ async fn hotspot_on(app: &AppHandle, engine: &Arc<ServerEngine>) -> Result<Hotsp
 /// Start TTL normalization if the user enabled it and internet is being shared.
 async fn maybe_start_ttl(app: &AppHandle, engine: &Arc<ServerEngine>) {
     let s = engine.settings();
-    if !(cfg!(windows) && s.normalize_ttl && s.share_internet) {
+    // Mobile Hotspot always shares internet, so the share_internet flag does not gate it there.
+    if !(cfg!(windows) && s.normalize_ttl && (s.share_internet || s.hotspot_engine == settings::ENGINE_MOBILE)) {
         return;
     }
     if !ttl::available() {
@@ -395,7 +404,26 @@ async fn maybe_start_ttl(app: &AppHandle, engine: &Arc<ServerEngine>) {
     }
     http::emit_log(app, "info", "server", "Turning on TTL normalization (Windows will ask for permission)…");
     match tauri::async_runtime::spawn_blocking(ttl::start_sidecar).await {
-        Ok(Ok(())) => http::emit_log(app, "success", "server", "TTL normalization is on; devices get internet on networks that block sharing."),
+        Ok(Ok(())) => {
+            // The launcher only confirms the elevated process started; wait for it to open the driver.
+            let mut outcome = "pending";
+            for _ in 0..10 {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                if ttl::is_running() {
+                    outcome = "running";
+                    break;
+                }
+                if ttl::status().map(|s| s.starts_with("error")).unwrap_or(false) {
+                    outcome = "error";
+                    break;
+                }
+            }
+            match outcome {
+                "running" => http::emit_log(app, "success", "server", "TTL normalization is on; devices get internet on networks that block sharing."),
+                "error" => http::emit_log(app, "warn", "server", format!("TTL normalization could not start: {}", ttl::status().unwrap_or_default())),
+                _ => http::emit_log(app, "warn", "server", "TTL normalization is starting; check the devices in a moment."),
+            }
+        }
         Ok(Err(e)) => http::emit_log(app, "warn", "server", format!("Could not start TTL normalization: {e}")),
         Err(e) => http::emit_log(app, "warn", "server", format!("Could not start TTL normalization: {e}")),
     }

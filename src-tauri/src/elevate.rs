@@ -133,7 +133,8 @@ pub fn run_exe_elevated(exe: &str, args: &[&str]) -> Result<(), String> {
         args.iter().map(|a| ps_quote(a)).collect::<Vec<_>>().join(",")
     };
     let cmd = format!("Start-Process -FilePath {} -Verb RunAs -WindowStyle Hidden -ArgumentList {}", ps_quote(exe), arglist);
-    let out = powershell(&["-Command", &cmd], Duration::from_secs(120))?;
+    // Match run_elevated: allow the user time at the UAC dialog.
+    let out = powershell(&["-Command", &cmd], Duration::from_secs(180))?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
         if err.contains("canceled") || err.contains("cancelled") || err.contains("1223") {

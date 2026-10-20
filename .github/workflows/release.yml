@@ -57,6 +57,8 @@ jobs:
         shell: pwsh
         run: |
           Invoke-WebRequest -Uri https://github.com/basil00/WinDivert/releases/download/v2.2.2/WinDivert-2.2.2-A.zip -OutFile wd.zip
+          $h = (Get-FileHash wd.zip -Algorithm SHA256).Hash
+          if ($h -ne '63CB41763BB4B20F600B6DE04E991A9C2BE73279E317D4D82F237B150C5F3F15') { throw "WinDivert zip hash mismatch: $h" }
           Expand-Archive wd.zip -DestinationPath wd
           $x64 = "$PWD\wd\WinDivert-2.2.2-A\x64"
           "WINDIVERT_PATH=$x64" | Out-File -FilePath $env:GITHUB_ENV -Append
