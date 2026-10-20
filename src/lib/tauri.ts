@@ -131,6 +131,8 @@ export interface SharingState {
   publicId: string | null;
   privateId: string | null;
   error: string | null;
+  /** "com" | "wmi" | "last_applied" | "none" — where Windows's answer came from. */
+  source: string;
 }
 
 export interface HotspotClient {

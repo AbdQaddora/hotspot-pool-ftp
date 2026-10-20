@@ -65,6 +65,7 @@ const wifiStatus = () => {
       publicId,
       privateId: mockShared ? ifaces[0].adapterId : null,
       error: null,
+      source: mockShared ? "last_applied" : "wmi",
     },
     hotspotAdapter: hotspotOn ? ifaces[0] : null,
     clients: hotspotOn ? [{ mac: "6C-88-14-16-41-94", name: null, ip: "192.168.137.23" }, { mac: "A4-50-46-7B-10-2C", name: "Galaxy-S24", ip: "192.168.137.41" }] : [],

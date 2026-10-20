@@ -214,7 +214,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("hpf-ps-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let scripts: Vec<(&str, String)> = vec![
-            ("apply-ics.ps1", wrap_elevated_body(&crate::ics::apply_script("abcdef01-1234-5678-9abc-def012345678", "99999999-8888-7777-6666-555555555555").unwrap(), "C:\\t\\apply-ics.ps1.err")),
+            ("apply-ics.ps1", wrap_elevated_body(&crate::ics::apply_script("abcdef01-1234-5678-9abc-def012345678", "99999999-8888-7777-6666-555555555555", Some("C:\\t\\apply-ics.state.json")).unwrap(), "C:\\t\\apply-ics.ps1.err")),
             ("apply-hosts.ps1", wrap_elevated_body(&crate::names::hosts_script("C:\\t\\hosts.new", "C:\\Windows\\System32\\drivers\\etc\\hosts"), "C:\\t\\apply-hosts.ps1.err")),
             ("read-ics.ps1", crate::ics::read_script().to_string()),
             ("wfd-adapters.ps1", crate::wfd::go_adapter_script().to_string()),

@@ -42,11 +42,28 @@ pub struct SharingState {
     pub public_id: Option<String>,
     pub private_id: Option<String>,
     pub error: Option<String>,
+    /// Where the answer came from: "com" (HNetCfg), "wmi" (HomeNet), "last_applied" (captured during the admin step), "none".
+    pub source: String,
 }
 
 impl SharingState {
     pub fn unavailable(err: impl Into<String>) -> Self {
-        SharingState { available: false, connections: vec![], public_id: None, private_id: None, error: Some(err.into()) }
+        SharingState { available: false, connections: vec![], public_id: None, private_id: None, error: Some(err.into()), source: "none".into() }
+    }
+}
+
+/// A non-admin read that lists no connections at all is blind, not "nothing
+/// shared": prefer what the last admin step captured, else say we cannot see.
+pub fn pick_state(read: SharingState, last_applied: Option<SharingState>) -> SharingState {
+    if !read.available || !read.connections.is_empty() {
+        return read;
+    }
+    match last_applied {
+        Some(mut s) => {
+            s.source = "last_applied".into();
+            s
+        }
+        None => SharingState::unavailable("Windows only shows sharing details to administrators; click Fix sharing once to capture them."),
     }
 }
 
@@ -80,6 +97,14 @@ fn braced_upper(norm: &str) -> String {
 }
 
 #[derive(Deserialize)]
+struct RawWrapped {
+    #[serde(default)]
+    source: String,
+    #[serde(default)]
+    connections: Vec<RawConnection>,
+}
+
+#[derive(Deserialize)]
 struct RawConnection {
     id: String,
     name: String,
@@ -99,14 +124,17 @@ pub fn parse_sharing_json(json: &str) -> SharingState {
     if text.is_empty() {
         return SharingState::unavailable("Windows printed no sharing state");
     }
-    let raws: Vec<RawConnection> = match serde_json::from_str::<Vec<RawConnection>>(text) {
-        Ok(v) => v,
-        Err(_) => match serde_json::from_str::<RawConnection>(text) {
-            Ok(one) => vec![one],
-            Err(_) => return SharingState::unavailable(crate::elevate::first_line(text).chars().take(200).collect::<String>()),
+    let (source, raws): (String, Vec<RawConnection>) = match serde_json::from_str::<RawWrapped>(text) {
+        Ok(w) if !w.source.is_empty() => (w.source, w.connections),
+        _ => match serde_json::from_str::<Vec<RawConnection>>(text) {
+            Ok(v) => ("com".into(), v),
+            Err(_) => match serde_json::from_str::<RawConnection>(text) {
+                Ok(one) => ("com".into(), vec![one]),
+                Err(_) => return SharingState::unavailable(crate::elevate::first_line(text).chars().take(200).collect::<String>()),
+            },
         },
     };
-    let mut st = SharingState { available: true, connections: vec![], public_id: None, private_id: None, error: None };
+    let mut st = SharingState { available: true, connections: vec![], public_id: None, private_id: None, error: None, source };
     for r in raws {
         let id = norm_guid(&r.id).unwrap_or(r.id);
         let sharing = match (r.enabled, r.r#type) {
@@ -125,18 +153,36 @@ pub fn parse_sharing_json(json: &str) -> SharingState {
 }
 
 /// PowerShell that prints every connection and its ICS role as JSON.
+/// Non-admin `HNetCfg.HNetShare` often enumerates nothing, so the script
+/// then falls back to the HomeNet WMI store (names from Get-NetAdapter).
 pub fn read_script() -> &'static str {
     concat!(
         "$ErrorActionPreference = 'Stop'\r\n",
         "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\r\n",
-        "$m = New-Object -ComObject HNetCfg.HNetShare\r\n",
+        "$names = @{}\r\n",
+        "foreach ($n in @(Get-NetAdapter -IncludeHidden -ErrorAction SilentlyContinue)) { $names[([string]$n.InterfaceGuid).ToLower()] = @{ name = [string]$n.Name; up = ($n.Status -eq 'Up') } }\r\n",
         "$out = @()\r\n",
-        "foreach ($c in $m.EnumEveryConnection) {\r\n",
-        "  $p = $m.NetConnectionProps.Invoke($c)\r\n",
-        "  $cfg = $m.INetSharingConfigurationForINetConnection.Invoke($c)\r\n",
-        "  $out += [pscustomobject]@{ id = [string]$p.Guid; name = [string]$p.Name; connected = ($p.Status -eq 2); enabled = [bool]$cfg.SharingEnabled; type = [int]$cfg.SharingConnectionType }\r\n",
+        "$source = 'com'\r\n",
+        "try {\r\n",
+        "  $m = New-Object -ComObject HNetCfg.HNetShare\r\n",
+        "  foreach ($c in $m.EnumEveryConnection) {\r\n",
+        "    $p = $m.NetConnectionProps.Invoke($c)\r\n",
+        "    $cfg = $m.INetSharingConfigurationForINetConnection.Invoke($c)\r\n",
+        "    $out += [pscustomobject]@{ id = [string]$p.Guid; name = [string]$p.Name; connected = ($p.Status -eq 2); enabled = [bool]$cfg.SharingEnabled; type = [int]$cfg.SharingConnectionType }\r\n",
+        "  }\r\n",
+        "} catch {}\r\n",
+        "if ($out.Count -eq 0) {\r\n",
+        "  $source = 'wmi'\r\n",
+        "  foreach ($e in @(Get-WmiObject -Namespace 'root\\Microsoft\\HomeNet' -Class HNet_ConnectionProperties -ErrorAction SilentlyContinue)) {\r\n",
+        "    if ([string]$e.Connection -match '\\{[0-9A-Fa-f-]{36}\\}') {\r\n",
+        "      $g = $Matches[0]; $info = $names[$g.ToLower()]\r\n",
+        "      $nm = if ($info) { $info.name } else { $g }\r\n",
+        "      $up = if ($info) { $info.up } else { $false }\r\n",
+        "      $out += [pscustomobject]@{ id = $g; name = $nm; connected = $up; enabled = [bool]($e.IsIcsPublic -or $e.IsIcsPrivate); type = $(if ($e.IsIcsPublic) { 0 } else { 1 }) }\r\n",
+        "    }\r\n",
+        "  }\r\n",
         "}\r\n",
-        "ConvertTo-Json -InputObject @($out) -Compress\r\n",
+        "ConvertTo-Json -InputObject @{ source = $source; connections = @($out) } -Compress -Depth 4\r\n",
     )
 }
 
@@ -151,9 +197,27 @@ pub fn read_script() -> &'static str {
 /// them, makes sure the ICS service runs, enables public then private, and
 /// retries after another cleanup if Windows still refuses. `$step` names the
 /// stage for the error file.
-pub fn apply_script(public: &str, private: &str) -> Result<String, String> {
+pub fn apply_script(public: &str, private: &str, state_path: Option<&str>) -> Result<String, String> {
     let pub_id = norm_guid(public).ok_or_else(|| format!("Not an adapter id: {public}"))?;
     let priv_id = norm_guid(private).ok_or_else(|| format!("Not an adapter id: {private}"))?;
+    // Elevated, the COM enumeration works: capture the resulting state for non-admin reads later.
+    let dump = state_path
+        .map(|p| {
+            format!(
+                concat!(
+                    "$step = 'capture state'
+",
+                    "$state = @()
+",
+                    "foreach ($c in $conns) {{ $p = & $propsOf $c; $cfg = & $cfgOf $c; $state += [pscustomobject]@{{ id = [string]$p.Guid; name = [string]$p.Name; connected = ($p.Status -eq 2); enabled = [bool]$cfg.SharingEnabled; type = [int]$cfg.SharingConnectionType }} }}
+",
+                    "ConvertTo-Json -InputObject @{{ source = 'com'; connections = @($state) }} -Compress -Depth 4 | Out-File -LiteralPath {} -Encoding utf8
+",
+                ),
+                crate::elevate::ps_quote(p)
+            )
+        })
+        .unwrap_or_default();
     const TEMPLATE: &str = concat!(
         "$step = 'start'\r\n",
         "$m = New-Object -ComObject HNetCfg.HNetShare\r\n",
@@ -199,7 +263,7 @@ pub fn apply_script(public: &str, private: &str) -> Result<String, String> {
         "  }\r\n",
         "}\r\n",
     );
-    Ok(TEMPLATE.replace("__PUB__", &braced_upper(&pub_id)).replace("__PRIV__", &braced_upper(&priv_id)))
+    Ok(TEMPLATE.replace("__PUB__", &braced_upper(&pub_id)).replace("__PRIV__", &braced_upper(&priv_id)) + &dump)
 }
 
 // ------------------------------------------------------------ live queries
@@ -246,12 +310,25 @@ pub fn list_upstreams() -> Vec<Upstream> {
     }
 }
 
-/// Current ICS pairing as Windows reports it (hidden PowerShell, no UAC).
+fn last_applied_path() -> std::path::PathBuf {
+    std::env::temp_dir().join("hotspot-pool").join("ics-last.json")
+}
+
+/// The pairing captured during the last admin step (kept across restarts).
+pub fn last_applied() -> Option<SharingState> {
+    let text = std::fs::read_to_string(last_applied_path()).ok()?;
+    let s = parse_sharing_json(&text);
+    (s.available && !s.connections.is_empty()).then_some(s)
+}
+
+/// Current ICS pairing: a hidden read (COM, then WMI), else what the last
+/// admin step captured, else "cannot see".
 pub fn sharing_state() -> SharingState {
-    match crate::elevate::run_hidden(read_script()) {
+    let read = match crate::elevate::run_hidden(read_script()) {
         Ok(out) => parse_sharing_json(&out),
         Err(e) => SharingState::unavailable(if e.is_empty() { "Windows did not report the sharing state".to_string() } else { e }),
-    }
+    };
+    pick_state(read, last_applied())
 }
 
 /// A value plus when it was computed; `get` recomputes when asked for a
@@ -314,9 +391,13 @@ pub fn without_adapter(upstreams: Vec<Upstream>, adapter_id: Option<&str>) -> Ve
     }
 }
 
-/// Point ICS from `public` to `private` (one UAC prompt).
+/// Point ICS from `public` to `private` (one UAC prompt) and remember the
+/// resulting pairing for non-admin reads.
 pub fn apply_sharing(public: &str, private: &str) -> Result<(), String> {
-    let script = apply_script(public, private)?;
+    let state_path = last_applied_path();
+    let _ = std::fs::create_dir_all(state_path.parent().expect("parent"));
+    let _ = std::fs::remove_file(&state_path);
+    let script = apply_script(public, private, Some(&state_path.display().to_string()))?;
     crate::elevate::run_elevated("apply-ics.ps1", &script).map_err(|e| {
         if e.contains("cancelled") {
             "Windows needs permission to change Internet Connection Sharing. The prompt was cancelled.".to_string()
@@ -389,7 +470,7 @@ pub fn format_diagnostics(version: &str, st: &WifiShareStatus, wfd_adapters: &[c
     for u in &st.upstreams {
         line(&mut out, format!("  {} ({}, {}, default: {}) {}", u.name, u.kind, u.connectivity, u.is_default, u.id));
     }
-    line(&mut out, format!("sharing: available: {} public: {} private: {} error: {}", st.sharing.available, st.sharing.public_id.as_deref().unwrap_or("-"), st.sharing.private_id.as_deref().unwrap_or("-"), st.sharing.error.as_deref().unwrap_or("-")));
+    line(&mut out, format!("sharing: available: {} source: {} public: {} private: {} error: {}", st.sharing.available, st.sharing.source, st.sharing.public_id.as_deref().unwrap_or("-"), st.sharing.private_id.as_deref().unwrap_or("-"), st.sharing.error.as_deref().unwrap_or("-")));
     for c in &st.sharing.connections {
         line(&mut out, format!("  {} ({}) {} {}", c.name, if c.connected { "connected" } else { "not connected" }, c.sharing, c.id));
     }
@@ -473,7 +554,7 @@ mod tests {
         Upstream { id: id.into(), name: "Wi-Fi".into(), kind: "wifi", connectivity, is_default: true }
     }
     fn sharing(public: Option<&str>, private: Option<&str>) -> SharingState {
-        SharingState { available: true, connections: vec![], public_id: public.map(String::from), private_id: private.map(String::from), error: None }
+        SharingState { available: true, connections: vec![], public_id: public.map(String::from), private_id: private.map(String::from), error: None, source: "com".into() }
     }
     const A: &str = "abcdef01-1234-5678-9abc-def012345678";
     const B: &str = "11111111-2222-3333-4444-555555555555";
@@ -508,6 +589,44 @@ mod tests {
     }
 
     #[test]
+    fn parse_wrapped_format_with_source() {
+        let json = r#"{"source":"wmi","connections":[{"id":"{ABCDEF01-1234-5678-9ABC-DEF012345678}","name":"Wi-Fi","connected":true,"enabled":true,"type":0}]}"#;
+        let s = parse_sharing_json(json);
+        assert!(s.available);
+        assert_eq!(s.source, "wmi");
+        assert_eq!(s.public_id.as_deref(), Some(A));
+        // Legacy bare array still parses, source "com".
+        assert_eq!(parse_sharing_json("[]").source, "com");
+    }
+
+    #[test]
+    fn blind_read_uses_last_applied_or_is_unavailable() {
+        // Non-admin reads can come back empty although Windows has connections: that is "blind", not "nothing shared".
+        let blind = parse_sharing_json(r#"{"source":"com","connections":[]}"#);
+        assert!(blind.available && blind.connections.is_empty());
+        let applied = sharing(Some(A), Some(H));
+        let picked = pick_state(blind.clone(), Some(applied.clone()));
+        assert_eq!(picked.public_id.as_deref(), Some(A));
+        assert_eq!(picked.source, "last_applied");
+        let none = pick_state(blind, None);
+        assert!(!none.available);
+        assert!(none.error.as_deref().unwrap_or("").contains("administrator"));
+        // A real read wins over the cache.
+        let real = parse_sharing_json(r#"[{"id":"{11111111-2222-3333-4444-555555555555}","name":"Eth","connected":true,"enabled":true,"type":0}]"#);
+        assert_eq!(pick_state(real, Some(applied)).public_id.as_deref(), Some(B));
+    }
+
+    #[test]
+    fn apply_script_dumps_resulting_state() {
+        let s = apply_script(A, H, Some("C:\\t\\apply-ics.state.json")).unwrap();
+        assert!(s.contains("'C:\\t\\apply-ics.state.json'"));
+        assert!(s.contains("ConvertTo-Json"));
+        assert!(apply_script(A, H, None).unwrap().contains("EnableSharing(1)"));
+        assert!(read_script().contains("HomeNet"));
+        assert!(read_script().contains("Get-NetAdapter -IncludeHidden"));
+    }
+
+    #[test]
     fn parse_single_object_and_empty() {
         // ConvertTo-Json emits a bare object for a one-element array on old PowerShell.
         let s = parse_sharing_json(r#"{"id":"{ABCDEF01-1234-5678-9ABC-DEF012345678}","name":"Wi-Fi","connected":true,"enabled":false,"type":0}"#);
@@ -530,7 +649,7 @@ mod tests {
     #[test]
     fn scripts_are_robust() {
         assert!(read_script().contains("[Console]::OutputEncoding"));
-        let s = apply_script(A, H).unwrap();
+        let s = apply_script(A, H, None).unwrap();
         assert!(s.contains("try { $cfg.DisableSharing() } catch {}"));
     }
 
@@ -540,7 +659,7 @@ mod tests {
     /// retries once after another cleanup.
     #[test]
     fn apply_script_clears_stale_homenet_flags_first() {
-        let s = apply_script(A, H).unwrap();
+        let s = apply_script(A, H, None).unwrap();
         let cleanup = s.find("HNet_ConnectionProperties").expect("HomeNet cleanup present");
         assert!(s.contains(r"root\Microsoft\HomeNet"));
         assert!(s.contains("IsIcsPublic") && s.contains("IsIcsPrivate"));
@@ -580,9 +699,9 @@ mod tests {
 
     #[test]
     fn script_rejects_bad_guid() {
-        assert!(apply_script("x", "y").is_err());
-        assert!(apply_script(A, "y").is_err());
-        let s = apply_script(A, H).unwrap();
+        assert!(apply_script("x", "y", None).is_err());
+        assert!(apply_script(A, "y", None).is_err());
+        let s = apply_script(A, H, None).unwrap();
         assert!(s.contains("{ABCDEF01-1234-5678-9ABC-DEF012345678}"));
         assert!(s.contains("{99999999-8888-7777-6666-555555555555}"));
         assert!(s.find("EnableSharing(0)").unwrap() < s.find("EnableSharing(1)").unwrap());
@@ -646,7 +765,7 @@ mod tests {
             upstreams: vec![up(A, "internet")],
             selected_upstream: None,
             effective_upstream: Some(A.into()),
-            sharing: SharingState { available: true, connections: vec![SharingConnection { id: A.into(), name: "Wi-Fi".into(), connected: true, sharing: "public" }], public_id: Some(A.into()), private_id: None, error: None },
+            sharing: SharingState { available: true, connections: vec![SharingConnection { id: A.into(), name: "Wi-Fi".into(), connected: true, sharing: "public" }], public_id: Some(A.into()), private_id: None, error: None, source: "wmi".into() },
             hotspot_adapter: None,
             clients: vec![],
             health: "not_shared",
@@ -657,7 +776,7 @@ mod tests {
         };
         let adapters = vec![crate::wfd::WfdAdapter { name: "Local Area Connection* 2".into(), guid: H.into(), up: false, status: "Disconnected".into() }];
         let d = format_diagnostics("0.10.2", &st, &adapters);
-        for needle in ["0.10.2", "engine: wifidirect", "health: not_shared", "ap_running: false", "Wi-Fi is turned off.", "Wi-Fi (", "public", "Local Area Connection* 2", "Disconnected", "ssid: ABD", "state: on"] {
+        for needle in ["0.10.2", "source: wmi", "engine: wifidirect", "health: not_shared", "ap_running: false", "Wi-Fi is turned off.", "Wi-Fi (", "public", "Local Area Connection* 2", "Disconnected", "ssid: ABD", "state: on"] {
             assert!(d.contains(needle), "missing {needle:?} in:\n{d}");
         }
         assert!(!d.contains("secret12"), "passphrase must not be in diagnostics");
