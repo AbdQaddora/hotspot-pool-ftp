@@ -72,7 +72,7 @@ export default function App() {
                   />
                 )}
                 {tab === "wifi" && (
-                  <WifiTab wifi={wifi} hotspot={server.hotspot} settings={server.settings} busy={server.busy} onToggleHotspot={server.toggleHotspot} onSaveSettings={server.saveSettings} onOpenHotspotSettings={server.openHotspotSettings} />
+                  <WifiTab wifi={wifi} hotspot={server.hotspot} settings={server.settings} busy={server.busy} logs={server.logs} onToggleHotspot={server.toggleHotspot} onRestartHotspot={server.restartHotspot} onSaveSettings={server.saveSettings} onOpenHotspotSettings={server.openHotspotSettings} />
                 )}
                 {tab === "inbox" && (
                   <InboxTab items={uploads.items} info={uploads.info} busy={uploads.busy} settings={server.settings} onApprove={uploads.approve} onReject={uploads.reject} onApproveAll={uploads.approveAll} onRejectAll={uploads.rejectAll} onGoSettings={() => setTab("settings")} />

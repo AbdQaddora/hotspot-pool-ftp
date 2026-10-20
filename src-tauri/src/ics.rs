@@ -352,18 +352,75 @@ pub struct WifiShareStatus {
     pub clients: Vec<crate::hotspot::HotspotClient>,
     pub health: &'static str,
     pub sign_in_url: &'static str,
+    /// Hotspot engine from settings: "wifidirect" | "mobile".
+    pub engine: String,
+    /// True when our own access point is the running hotspot.
+    pub ap_running: bool,
+    /// Why the access point engine last failed (the app then fell back to Mobile Hotspot).
+    pub ap_error: Option<String>,
+}
+
+/// With the access point engine, a hotspot that is on but is not our access
+/// point means the engine failed and Mobile Hotspot took over: that is the
+/// headline, not the sharing state.
+pub fn final_health(base: &'static str, engine: &str, hotspot_on: bool, ap_running: bool, ap_error: Option<&str>) -> &'static str {
+    if engine == crate::settings::ENGINE_WIFIDIRECT && hotspot_on && !ap_running && ap_error.is_some() {
+        return "ap_failed";
+    }
+    base
+}
+
+/// Plain-text report for support, without secrets.
+pub fn format_diagnostics(version: &str, st: &WifiShareStatus, wfd_adapters: &[crate::wfd::WfdAdapter]) -> String {
+    let mut out = String::new();
+    let line = |out: &mut String, s: String| {
+        out.push_str(&s);
+        out.push('\n');
+    };
+    line(&mut out, format!("Hotspot Pool {version} on {}", std::env::consts::OS));
+    line(&mut out, format!("engine: {}", st.engine));
+    line(&mut out, format!("health: {}", st.health));
+    line(&mut out, format!("ap_running: {}", st.ap_running));
+    line(&mut out, format!("ap_error: {}", st.ap_error.as_deref().unwrap_or("-")));
+    line(&mut out, format!("hotspot: state: {} ssid: {} clients: {} error: {}", st.hotspot.state, st.hotspot.ssid.as_deref().unwrap_or("-"), st.hotspot.client_count.map(|n| n.to_string()).unwrap_or_else(|| "-".into()), st.hotspot.error.as_deref().unwrap_or("-")));
+    line(&mut out, format!("hotspot adapter: {}", st.hotspot_adapter.as_ref().map(|a| format!("{} {} {}", a.name, a.ip, a.adapter_id.as_deref().unwrap_or("-"))).unwrap_or_else(|| "-".into())));
+    line(&mut out, format!("selected upstream: {}  effective: {}", st.selected_upstream.as_deref().unwrap_or("auto"), st.effective_upstream.as_deref().unwrap_or("-")));
+    line(&mut out, "upstreams:".into());
+    for u in &st.upstreams {
+        line(&mut out, format!("  {} ({}, {}, default: {}) {}", u.name, u.kind, u.connectivity, u.is_default, u.id));
+    }
+    line(&mut out, format!("sharing: available: {} public: {} private: {} error: {}", st.sharing.available, st.sharing.public_id.as_deref().unwrap_or("-"), st.sharing.private_id.as_deref().unwrap_or("-"), st.sharing.error.as_deref().unwrap_or("-")));
+    for c in &st.sharing.connections {
+        line(&mut out, format!("  {} ({}) {} {}", c.name, if c.connected { "connected" } else { "not connected" }, c.sharing, c.id));
+    }
+    line(&mut out, "wi-fi direct adapters:".into());
+    for a in wfd_adapters {
+        line(&mut out, format!("  {} ({}) {}", a.name, a.status, a.guid));
+    }
+    line(&mut out, format!("devices: {}", st.clients.len()));
+    for c in &st.clients {
+        line(&mut out, format!("  {} {} {}", c.name.as_deref().unwrap_or("-"), c.ip.as_deref().unwrap_or("-"), c.mac));
+    }
+    out
 }
 
 /// Blocking: queries Windows (WinRT + one hidden PowerShell unless a recent
 /// ICS answer is reused). Run off the UI thread.
 pub fn snapshot(selected: Option<&str>, fresh: bool) -> WifiShareStatus {
+    snapshot_with_engine(selected, fresh, crate::settings::ENGINE_WIFIDIRECT)
+}
+
+pub fn snapshot_with_engine(selected: Option<&str>, fresh: bool, engine: &str) -> WifiShareStatus {
+    let ap = crate::wfd::info();
+    let ap_error = crate::wfd::last_failure();
     let hotspot = crate::hotspot::info();
     let hotspot_adapter = crate::network::list_interfaces().into_iter().find(|i| i.is_hotspot);
     let upstreams = without_adapter(list_upstreams(), hotspot_adapter.as_ref().and_then(|a| a.adapter_id.as_deref()));
     let effective = effective_upstream(selected, &upstreams).cloned();
     let sharing = sharing_state_cached(fresh);
     let clients = if hotspot.state == "on" { crate::hotspot::clients() } else { vec![] };
-    let health = assess(hotspot.state == "on", effective.as_ref(), &sharing, hotspot_adapter.as_ref().and_then(|a| a.adapter_id.as_deref()));
+    let base = assess(hotspot.state == "on", effective.as_ref(), &sharing, hotspot_adapter.as_ref().and_then(|a| a.adapter_id.as_deref()));
+    let health = final_health(base, engine, hotspot.state == "on", ap.running, ap_error.as_deref());
     WifiShareStatus {
         hotspot,
         upstreams,
@@ -374,6 +431,9 @@ pub fn snapshot(selected: Option<&str>, fresh: bool) -> WifiShareStatus {
         clients,
         health,
         sign_in_url: SIGN_IN_URL,
+        engine: engine.to_string(),
+        ap_running: ap.running,
+        ap_error,
     }
 }
 
@@ -566,6 +626,41 @@ mod tests {
         assert!(!is_gateway(&mk("169.254.10.7", Some(H)), H));
         assert!(!is_gateway(&mk("192.168.137.1", Some(A)), H));
         assert!(!is_gateway(&mk("192.168.137.1", None), H));
+    }
+
+    #[test]
+    fn ap_failure_overrides_health() {
+        // Access point engine, hotspot on, but the AP is not running and we know why: say so.
+        assert_eq!(final_health("not_shared", "wifidirect", true, false, Some("radio busy")), "ap_failed");
+        assert_eq!(final_health("sharing", "wifidirect", true, false, Some("radio busy")), "ap_failed");
+        assert_eq!(final_health("not_shared", "wifidirect", true, true, Some("old")), "not_shared");
+        assert_eq!(final_health("not_shared", "mobile", true, false, Some("x")), "not_shared");
+        assert_eq!(final_health("hotspot_off", "wifidirect", false, false, Some("x")), "hotspot_off");
+        assert_eq!(final_health("not_shared", "wifidirect", true, false, None), "not_shared");
+    }
+
+    #[test]
+    fn diagnostics_text_lists_everything() {
+        let st = WifiShareStatus {
+            hotspot: crate::hotspot::HotspotInfo { supported: true, state: "on", ssid: Some("ABD".into()), passphrase: Some("secret12".into()), client_count: Some(1), wifi_qr: None, error: None },
+            upstreams: vec![up(A, "internet")],
+            selected_upstream: None,
+            effective_upstream: Some(A.into()),
+            sharing: SharingState { available: true, connections: vec![SharingConnection { id: A.into(), name: "Wi-Fi".into(), connected: true, sharing: "public" }], public_id: Some(A.into()), private_id: None, error: None },
+            hotspot_adapter: None,
+            clients: vec![],
+            health: "not_shared",
+            sign_in_url: SIGN_IN_URL,
+            engine: "wifidirect".into(),
+            ap_running: false,
+            ap_error: Some("Wi-Fi is turned off.".into()),
+        };
+        let adapters = vec![crate::wfd::WfdAdapter { name: "Local Area Connection* 2".into(), guid: H.into(), up: false, status: "Disconnected".into() }];
+        let d = format_diagnostics("0.10.2", &st, &adapters);
+        for needle in ["0.10.2", "engine: wifidirect", "health: not_shared", "ap_running: false", "Wi-Fi is turned off.", "Wi-Fi (", "public", "Local Area Connection* 2", "Disconnected", "ssid: ABD", "state: on"] {
+            assert!(d.contains(needle), "missing {needle:?} in:\n{d}");
+        }
+        assert!(!d.contains("secret12"), "passphrase must not be in diagnostics");
     }
 
     #[test]

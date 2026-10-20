@@ -140,7 +140,7 @@ export interface HotspotClient {
   ip: string | null;
 }
 
-export type WifiHealth = "sharing" | "not_shared" | "wrong_upstream" | "signin" | "no_internet" | "hotspot_off" | "unknown";
+export type WifiHealth = "sharing" | "not_shared" | "wrong_upstream" | "signin" | "no_internet" | "hotspot_off" | "unknown" | "ap_failed";
 
 export interface WifiShareStatus {
   hotspot: HotspotInfo;
@@ -152,6 +152,11 @@ export interface WifiShareStatus {
   clients: HotspotClient[];
   health: WifiHealth;
   signInUrl: string;
+  engine: "wifidirect" | "mobile";
+  /** True when the app's own access point is the running hotspot. */
+  apRunning: boolean;
+  /** Why the access point engine last failed; the app then used Mobile Hotspot. */
+  apError: string | null;
 }
 
 export interface ShareResult {
@@ -178,6 +183,8 @@ export const api = {
   /** `fresh` forces a new read of the Windows sharing state instead of a recent cached one. */
   getWifiShareStatus: (fresh = false) => invoke<WifiShareStatus>("get_wifi_share_status", { fresh }),
   applyInternetSharing: () => invoke<WifiShareStatus>("apply_internet_sharing"),
+  /** Plain-text support report without passwords. */
+  getDiagnostics: () => invoke<string>("get_diagnostics"),
   autoShare: (ip?: string) => invoke<ShareResult>("auto_share", { ip: ip ?? null }),
   stopShare: (turnOffHotspot: boolean) => invoke<ShareResult>("stop_share", { turnOffHotspot }),
   getNetworkInterfaces: () => invoke<NetInterface[]>("get_network_interfaces"),

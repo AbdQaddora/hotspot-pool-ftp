@@ -1,13 +1,13 @@
 import { QRCodeSVG } from "qrcode.react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { AlertTriangle, Cable, Check, CheckCircle2, Copy, ExternalLink, Eye, EyeOff, Globe, Loader2, LogIn, Power, RefreshCw, Smartphone, Wifi, Wrench } from "lucide-react";
+import { AlertTriangle, Cable, Check, CheckCircle2, ClipboardList, Copy, ExternalLink, Eye, EyeOff, Globe, Loader2, LogIn, Power, RefreshCw, RotateCcw, Smartphone, Wifi, Wrench } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader, PageHeader, Row } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { wifiQr, type HotspotInfo, type Settings, type Upstream, type WifiHealth, type WifiShareStatus } from "@/lib/tauri";
+import { api, wifiQr, type HotspotInfo, type LogEvent, type Settings, type Upstream, type WifiHealth, type WifiShareStatus } from "@/lib/tauri";
 import type { useWifiShare } from "@/hooks/useWifiShare";
 
 interface Props {
@@ -15,7 +15,9 @@ interface Props {
   hotspot: HotspotInfo;
   settings: Settings;
   busy: boolean;
+  logs: LogEvent[];
   onToggleHotspot: () => void;
+  onRestartHotspot: () => void;
   onSaveSettings: (s: Settings) => Promise<boolean>;
   onOpenHotspotSettings: () => void;
 }
@@ -66,13 +68,28 @@ export function healthCopy(health: Shown, s: WifiShareStatus | null): { title: s
       return { title: "Turn on the hotspot", detail: "Devices join the hotspot and use the laptop's connection.", tone: "muted" };
     case "checking":
       return { title: "Checking internet sharing…", detail: "Asking Windows which connection reaches the hotspot.", tone: "muted" };
+    case "ap_failed":
+      return { title: "The access point could not start; running on Windows Mobile Hotspot", detail: `${s?.apError ?? "Unknown reason."} Mobile Hotspot cannot share the laptop's internet. Fix the cause, then retry the access point.`, tone: "warn" };
     default:
       return { title: "Could not read the sharing state", detail: s?.sharing.error ?? "Windows did not answer. Fix sharing sets it up from scratch.", tone: "warn" };
   }
 }
 
-export function WifiTab({ wifi, hotspot, settings, busy, onToggleHotspot, onSaveSettings, onOpenHotspotSettings }: Props) {
+export function WifiTab({ wifi, hotspot, settings, busy, logs, onToggleHotspot, onRestartHotspot, onSaveSettings, onOpenHotspotSettings }: Props) {
   const [showPass, setShowPass] = useState(false);
+  const [copiedDiag, setCopiedDiag] = useState(false);
+  const copyDiagnostics = async () => {
+    let text: string;
+    try {
+      text = await api.getDiagnostics();
+    } catch (e) {
+      text = `diagnostics failed: ${String(e)}`;
+    }
+    const tail = logs.slice(-40).map((l) => `${new Date(l.ts).toLocaleTimeString()} ${l.level.toUpperCase()} ${l.kind} ${l.message}`).join("\n");
+    await writeText(`${text}\nactivity (last ${Math.min(40, logs.length)}):\n${tail}\n`);
+    setCopiedDiag(true);
+    setTimeout(() => setCopiedDiag(false), 1500);
+  };
   const s = wifi.status;
   const hotspotOn = hotspot.state === "on";
   // A snapshot taken before the last hotspot change is stale; say so instead of showing the old verdict.
@@ -90,9 +107,14 @@ export function WifiTab({ wifi, hotspot, settings, busy, onToggleHotspot, onSave
         title="Share Wi-Fi"
         description="Give every device on the hotspot the laptop's internet, even when the network only admits the laptop."
         right={
-          <Button variant="ghost" size="sm" onClick={wifi.refresh} aria-label="Refresh">
-            <RefreshCw /> Refresh
-          </Button>
+          <>
+            <Button variant="ghost" size="sm" onClick={copyDiagnostics} aria-label="Copy diagnostics">
+              {copiedDiag ? <Check className="text-live" /> : <ClipboardList />} {copiedDiag ? "Copied" : "Copy diagnostics"}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={wifi.refresh} aria-label="Refresh">
+              <RefreshCw /> Refresh
+            </Button>
+          </>
         }
       />
 
@@ -112,6 +134,11 @@ export function WifiTab({ wifi, hotspot, settings, busy, onToggleHotspot, onSave
             {health === "signin" && s && (
               <Button variant="outline" className="h-10 px-4 text-[13px]" onClick={() => openUrl(s.signInUrl)}>
                 <LogIn /> Open sign-in page
+              </Button>
+            )}
+            {health === "ap_failed" && (
+              <Button variant="live" className="h-10 px-4 text-[13px]" onClick={onRestartHotspot} disabled={busy}>
+                {busy ? <Loader2 className="animate-spin" /> : <RotateCcw />} Retry access point
               </Button>
             )}
             {canFix && (

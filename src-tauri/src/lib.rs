@@ -341,9 +341,13 @@ async fn hotspot_on(app: &AppHandle, engine: &Arc<ServerEngine>) -> Result<Hotsp
     let preferred = settings.upstream_adapter.clone();
     if settings.hotspot_engine == settings::ENGINE_WIFIDIRECT && cfg!(windows) {
         match wifidirect_on(app, preferred.clone()).await {
-            Ok(info) => return Ok(info),
+            Ok(info) => {
+                wfd::set_last_failure(None);
+                return Ok(info);
+            }
             Err(e) => {
                 tauri::async_runtime::spawn_blocking(wfd::stop).await.map_err(|e| e.to_string())?;
+                wfd::set_last_failure(Some(e.message().to_string()));
                 if !e.allows_mobile_fallback() {
                     // Sharing has been touched: Mobile Hotspot on top of classic ICS is the conflict we are avoiding.
                     return Err(e.message().to_string());
@@ -396,17 +400,32 @@ async fn configure_hotspot(ssid: String, passphrase: String) -> Result<HotspotIn
 
 #[tauri::command]
 async fn get_wifi_share_status(engine: State<'_, Arc<ServerEngine>>, fresh: bool) -> Result<ics::WifiShareStatus, String> {
-    let selected = engine.settings().upstream_adapter;
-    tauri::async_runtime::spawn_blocking(move || ics::snapshot(selected.as_deref(), fresh)).await.map_err(|e| e.to_string())
+    let settings = engine.settings();
+    tauri::async_runtime::spawn_blocking(move || ics::snapshot_with_engine(settings.upstream_adapter.as_deref(), fresh, &settings.hotspot_engine)).await.map_err(|e| e.to_string())
+}
+
+/// Plain-text support report (no passwords): status snapshot + Wi-Fi Direct adapters.
+#[tauri::command]
+async fn get_diagnostics(engine: State<'_, Arc<ServerEngine>>) -> Result<String, String> {
+    let settings = engine.settings();
+    tauri::async_runtime::spawn_blocking(move || {
+        let st = ics::snapshot_with_engine(settings.upstream_adapter.as_deref(), true, &settings.hotspot_engine);
+        let adapters = wfd::wfd_adapters();
+        ics::format_diagnostics(env!("CARGO_PKG_VERSION"), &st, &adapters)
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Wire Windows Internet Connection Sharing from the chosen upstream to the
 /// hotspot adapter (one UAC prompt), then return a fresh snapshot.
 #[tauri::command]
 async fn apply_internet_sharing(app: AppHandle, engine: State<'_, Arc<ServerEngine>>) -> Result<ics::WifiShareStatus, String> {
-    let selected = engine.settings().upstream_adapter;
-    let sel = selected.clone();
-    let before = tauri::async_runtime::spawn_blocking(move || ics::snapshot(sel.as_deref(), true)).await.map_err(|e| e.to_string())?;
+    let settings = engine.settings();
+    let selected = settings.upstream_adapter.clone();
+    let eng = settings.hotspot_engine.clone();
+    let (sel, en) = (selected.clone(), eng.clone());
+    let before = tauri::async_runtime::spawn_blocking(move || ics::snapshot_with_engine(sel.as_deref(), true, &en)).await.map_err(|e| e.to_string())?;
     let Some(public) = before.effective_upstream.clone() else { return Err("Connect the laptop to the internet first.".into()) };
     let Some(private) = before.hotspot_adapter.as_ref().and_then(|a| a.adapter_id.clone()) else {
         return Err("Turn on the hotspot first; Windows creates its adapter then.".into());
@@ -414,7 +433,7 @@ async fn apply_internet_sharing(app: AppHandle, engine: State<'_, Arc<ServerEngi
     let upstream_name = before.upstreams.iter().find(|u| u.id == public).map(|u| u.name.clone()).unwrap_or_default();
     http::emit_log(&app, "info", "server", format!("Sharing {upstream_name} with the hotspot (Windows will ask for permission)…"));
     tauri::async_runtime::spawn_blocking(move || ics::apply_sharing(&public, &private)).await.map_err(|e| e.to_string())??;
-    let after = tauri::async_runtime::spawn_blocking(move || ics::snapshot(selected.as_deref(), true)).await.map_err(|e| e.to_string())?;
+    let after = tauri::async_runtime::spawn_blocking(move || ics::snapshot_with_engine(selected.as_deref(), true, &eng)).await.map_err(|e| e.to_string())?;
     if after.health == "sharing" {
         http::emit_log(&app, "success", "server", format!("Devices on the hotspot now use {upstream_name} for internet"));
         Ok(after)
@@ -561,6 +580,7 @@ pub fn run() {
             configure_hotspot,
             hotspot_settings_url,
             get_wifi_share_status,
+            get_diagnostics,
             apply_internet_sharing,
             auto_share,
             stop_share,

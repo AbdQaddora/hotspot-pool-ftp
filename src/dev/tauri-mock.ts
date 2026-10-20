@@ -68,8 +68,11 @@ const wifiStatus = () => {
     },
     hotspotAdapter: hotspotOn ? ifaces[0] : null,
     clients: hotspotOn ? [{ mac: "6C-88-14-16-41-94", name: null, ip: "192.168.137.23" }, { mac: "A4-50-46-7B-10-2C", name: "Galaxy-S24", ip: "192.168.137.41" }] : [],
-    health,
+    health: new URLSearchParams(location.search).has("apfail") && hotspotOn ? "ap_failed" : health,
     signInUrl: "http://www.msftconnecttest.com/redirect",
+    engine: settings.hotspotEngine,
+    apRunning: hotspotOn && settings.hotspotEngine === "wifidirect" && !new URLSearchParams(location.search).has("apfail"),
+    apError: new URLSearchParams(location.search).has("apfail") ? "Another hotspot program is using the Wi-Fi adapter. Turn off Windows Mobile Hotspot and MyPublicWiFi, then try again." : null,
   };
 };
 const ftpStatus = () =>
@@ -158,6 +161,8 @@ async function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<
       return "ms-settings:network-mobilehotspot";
     case "get_wifi_share_status":
       return wifiStatus();
+    case "get_diagnostics":
+      return "Hotspot Pool 0.10.2 (mock)\nengine: wifidirect\nhealth: not_shared\n";
     case "apply_internet_sharing":
       await new Promise((r) => setTimeout(r, 500));
       mockShared = true;

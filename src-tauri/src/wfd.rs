@@ -59,6 +59,15 @@ pub fn is_resource_in_use(message: &str) -> bool {
     message == abort_reason(2)
 }
 
+/// Why the access point engine last failed to start (cleared when it starts).
+pub fn last_failure() -> Option<String> {
+    LAST_FAILURE.lock().unwrap_or_else(|p| p.into_inner()).clone()
+}
+pub fn set_last_failure(reason: Option<String>) {
+    *LAST_FAILURE.lock().unwrap_or_else(|p| p.into_inner()) = reason;
+}
+static LAST_FAILURE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
 /// 12 random alphanumerics, used only when Windows has no saved hotspot password.
 pub fn random_passphrase() -> String {
     use rand::Rng;

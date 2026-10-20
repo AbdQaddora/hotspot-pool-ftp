@@ -145,6 +145,21 @@ export function useServer() {
     }
   }, [hotspot.state, refreshInterfaces]);
 
+  /** Off then on again, e.g. to retry the access point after a fallback to Mobile Hotspot. */
+  const restartHotspot = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.setHotspot(false);
+      setHotspot(await api.setHotspot(true));
+      await refreshInterfaces();
+    } catch (e) {
+      fail(e);
+    } finally {
+      setBusy(false);
+    }
+  }, [refreshInterfaces]);
+
   const configureHotspot = useCallback(async (ssid: string, passphrase: string) => {
     setError(null);
     try {
@@ -201,7 +216,7 @@ export function useServer() {
 
   return {
     status, stats, history, logs, interfaces, selectedIp, setSelectedIp, busy, phase, error, start, stop, toggle, refreshInterfaces,
-    hotspot, toggleHotspot, configureHotspot, openHotspotSettings, refreshHotspot,
+    hotspot, toggleHotspot, restartHotspot, configureHotspot, openHotspotSettings, refreshHotspot,
     settings, saveSettings, setupName, checkName, nameBusy,
     clearLogs: () => setLogs([]), dismissError: () => setError(null),
   };
