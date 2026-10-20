@@ -225,7 +225,12 @@ pub fn info() -> HotspotInfo {
         let wifi_qr = ap.ssid.as_deref().map(|s| wifi_qr(s, ap.passphrase.as_deref()));
         return HotspotInfo { supported: true, state: "on", ssid: ap.ssid, passphrase: ap.passphrase, client_count: Some(ap.clients.len() as u32), wifi_qr, error: None };
     }
-    imp::info()
+    let mut info = imp::info();
+    if let Some(reason) = ap.error {
+        // The access point stopped by itself; say why instead of a silent "Off".
+        info.error = Some(format!("The access point stopped: {reason}"));
+    }
+    info
 }
 
 /// Windows Mobile Hotspot only (ignores our access point).

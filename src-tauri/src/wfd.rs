@@ -31,12 +31,47 @@ pub fn abort_reason(error_code: i32) -> &'static str {
     }
 }
 
-/// Lists the Wi-Fi Direct virtual adapter that is up (the group owner side).
+/// Why starting the access point engine failed, and whether Windows Mobile
+/// Hotspot may be used instead. Once Internet Connection Sharing has been
+/// touched, starting Mobile Hotspot on top of it recreates the ICS/WinNAT
+/// conflict, so only failures before that point allow the fallback.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StartFail {
+    /// Mobile Hotspot could not be turned off, the AP did not start, or its adapter never appeared.
+    ApStart(String),
+    /// The AP is up but sharing could not be set up (UAC cancelled, ICS error, no address).
+    AfterAp(String),
+}
+
+impl StartFail {
+    pub fn allows_mobile_fallback(&self) -> bool {
+        matches!(self, StartFail::ApStart(_))
+    }
+    pub fn message(&self) -> &str {
+        match self {
+            StartFail::ApStart(m) | StartFail::AfterAp(m) => m,
+        }
+    }
+}
+
+/// The abort reason Windows gives while the previous hotspot is still letting go of the radio.
+pub fn is_resource_in_use(message: &str) -> bool {
+    message == abort_reason(2)
+}
+
+/// 12 random alphanumerics, used only when Windows has no saved hotspot password.
+pub fn random_passphrase() -> String {
+    use rand::Rng;
+    rand::rng().sample_iter(&rand::distr::Alphanumeric).take(12).map(char::from).collect()
+}
+
+/// Lists every Wi-Fi Direct virtual adapter with its status (Windows ships
+/// two; the group owner's one comes Up when the AP starts).
 pub fn go_adapter_script() -> &'static str {
     concat!(
         "$ErrorActionPreference = 'Stop'\r\n",
         "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\r\n",
-        "$a = Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceDescription -like 'Microsoft Wi-Fi Direct Virtual Adapter*' -and $_.Status -eq 'Up' } | Select-Object Name, InterfaceGuid, Status\r\n",
+        "$a = Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceDescription -like 'Microsoft Wi-Fi Direct Virtual Adapter*' } | Select-Object Name, InterfaceGuid, Status\r\n",
         "ConvertTo-Json -InputObject @($a) -Compress\r\n",
     )
 }
@@ -47,24 +82,48 @@ struct RawAdapter {
     name: String,
     #[serde(rename = "InterfaceGuid")]
     guid: String,
+    #[serde(rename = "Status", default)]
+    status: String,
 }
 
-/// (friendly name, normalized GUID) of the first adapter in the script output.
-pub fn pick_go_adapter(json: &str) -> Option<(String, String)> {
+#[derive(Debug, Clone, PartialEq)]
+pub struct WfdAdapter {
+    pub name: String,
+    /// Normalized GUID.
+    pub guid: String,
+    pub up: bool,
+    pub status: String,
+}
+
+/// Parse the script output (array, bare object, or nothing).
+pub fn list_wfd_adapters(json: &str) -> Vec<WfdAdapter> {
     let text = json.trim();
     if text.is_empty() {
-        return None;
+        return vec![];
     }
-    let list: Vec<RawAdapter> = serde_json::from_str::<Vec<RawAdapter>>(text)
-        .or_else(|_| serde_json::from_str::<RawAdapter>(text).map(|a| vec![a]))
-        .ok()?;
-    list.into_iter().find_map(|a| crate::ics::norm_guid(&a.guid).map(|g| (a.name, g)))
+    let Ok(list) = serde_json::from_str::<Vec<RawAdapter>>(text).or_else(|_| serde_json::from_str::<RawAdapter>(text).map(|a| vec![a])) else { return vec![] };
+    list.into_iter()
+        .filter_map(|a| crate::ics::norm_guid(&a.guid).map(|g| WfdAdapter { name: a.name, guid: g, up: a.status.eq_ignore_ascii_case("Up"), status: a.status }))
+        .collect()
 }
 
-/// Ask Windows which Wi-Fi Direct virtual adapter is up right now.
-pub fn find_go_adapter() -> Result<(String, String), String> {
-    let out = crate::elevate::run_hidden(go_adapter_script())?;
-    pick_go_adapter(&out).ok_or_else(|| "Windows has not brought up the access point's network adapter yet.".to_string())
+/// The group owner's adapter: one that came Up since `before`, else any Up one.
+pub fn pick_go_adapter(before: &[WfdAdapter], after: &[WfdAdapter]) -> Option<WfdAdapter> {
+    let was_up = |g: &str| before.iter().any(|b| b.guid == g && b.up);
+    after.iter().find(|a| a.up && !was_up(&a.guid)).or_else(|| after.iter().find(|a| a.up)).cloned()
+}
+
+/// Ask Windows for the current list of Wi-Fi Direct virtual adapters.
+pub fn wfd_adapters() -> Vec<WfdAdapter> {
+    crate::elevate::run_hidden(go_adapter_script()).map(|out| list_wfd_adapters(&out)).unwrap_or_default()
+}
+
+/// One-line description of candidates, for the log when none came up.
+pub fn describe_adapters(list: &[WfdAdapter]) -> String {
+    if list.is_empty() {
+        return "none found".into();
+    }
+    list.iter().map(|a| format!("{} ({})", a.name, a.status)).collect::<Vec<_>>().join(", ")
 }
 
 #[cfg(windows)]
@@ -142,6 +201,11 @@ mod imp {
                 Ok(())
             }))
             .unwrap_or(0);
+        let already_gone = device.ConnectionStatus().map(|s| s == WiFiDirectConnectionStatus::Disconnected).unwrap_or(false);
+        if already_gone {
+            let _ = device.RemoveConnectionStatusChanged(token);
+            return;
+        }
         lock(&shared).clients.insert(key, Client { device, token, name, ip });
     }
 
@@ -209,11 +273,22 @@ mod imp {
         }
     }
 
+    const STOPPED: i32 = 2;
+
+    /// Stop the AP and wait (≤ 5 s) until Windows reports it stopped, so the
+    /// radio is free for whatever starts next.
     pub fn stop() {
         let Some(ap) = lock(&AP).take() else { return };
-        let _ = ap.publisher.RemoveStatusChanged(ap.status_token);
         let _ = ap.listener.RemoveConnectionRequested(ap.request_token);
+        let was_started = lock(&ap.shared).status == STARTED;
         let _ = ap.publisher.Stop();
+        if was_started {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while lock(&ap.shared).status != STOPPED && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+        let _ = ap.publisher.RemoveStatusChanged(ap.status_token);
         let clients: Vec<Client> = lock(&ap.shared).clients.drain().map(|(_, c)| c).collect();
         for c in clients {
             let _ = c.device.RemoveConnectionStatusChanged(c.token);
@@ -222,16 +297,24 @@ mod imp {
     }
 
     pub fn info() -> ApInfo {
-        let guard = lock(&AP);
-        let Some(ap) = guard.as_ref() else { return ApInfo::default() };
-        let g = lock(&ap.shared);
-        ApInfo {
-            running: g.status == STARTED,
-            ssid: Some(ap.ssid.clone()),
-            passphrase: Some(ap.passphrase.clone()),
-            clients: g.clients.values().map(|c| HotspotClient { mac: String::new(), name: c.name.clone(), ip: c.ip.clone() }).collect(),
-            error: g.error.clone(),
+        let (snapshot, dead) = {
+            let guard = lock(&AP);
+            let Some(ap) = guard.as_ref() else { return ApInfo::default() };
+            let g = lock(&ap.shared);
+            let info = ApInfo {
+                running: g.status == STARTED,
+                ssid: Some(ap.ssid.clone()),
+                passphrase: Some(ap.passphrase.clone()),
+                clients: g.clients.values().map(|c| HotspotClient { mac: String::new(), name: c.name.clone(), ip: c.ip.clone() }).collect(),
+                error: g.error.clone(),
+            };
+            (info, g.status == ABORTED || g.status == STOPPED)
+        };
+        if dead {
+            // The AP died on its own (Wi-Fi turned off…): keep the reason, drop the objects.
+            stop();
         }
+        snapshot
     }
 }
 
@@ -271,18 +354,55 @@ mod tests {
         assert!(abort_reason(99).contains("could not start"));
     }
 
+    const A1: &str = r#"{"Name":"Local Area Connection* 1","InterfaceGuid":"{11111111-2222-3333-4444-555555555555}","Status":"Disconnected"}"#;
+    const A2_DOWN: &str = r#"{"Name":"Local Area Connection* 2","InterfaceGuid":"{99999999-8888-7777-6666-555555555555}","Status":"Disconnected"}"#;
+    const A2_UP: &str = r#"{"Name":"Local Area Connection* 2","InterfaceGuid":"{99999999-8888-7777-6666-555555555555}","Status":"Up"}"#;
+    const A1_UP: &str = r#"{"Name":"Local Area Connection* 1","InterfaceGuid":"{11111111-2222-3333-4444-555555555555}","Status":"Up"}"#;
+
     #[test]
-    fn pick_go_adapter_parses_array_object_and_empty() {
-        let two = r#"[{"Name":"Local Area Connection* 2","InterfaceGuid":"{99999999-8888-7777-6666-555555555555}","Status":"Up"},
-                      {"Name":"Local Area Connection* 1","InterfaceGuid":"{11111111-2222-3333-4444-555555555555}","Status":"Up"}]"#;
-        assert_eq!(pick_go_adapter(two), Some(("Local Area Connection* 2".into(), "99999999-8888-7777-6666-555555555555".into())));
-        let one = r#"{"Name":"Local Area Connection* 12","InterfaceGuid":"{ABCDEF01-1234-5678-9ABC-DEF012345678}","Status":"Up"}"#;
-        assert_eq!(pick_go_adapter(one), Some(("Local Area Connection* 12".into(), "abcdef01-1234-5678-9abc-def012345678".into())));
-        assert_eq!(pick_go_adapter(""), None);
-        assert_eq!(pick_go_adapter("[]"), None);
-        assert_eq!(pick_go_adapter("Access denied"), None);
+    fn list_wfd_adapters_parses_array_object_and_garbage() {
+        let list = list_wfd_adapters(&format!("[{A1},{A2_UP}]"));
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[1].guid, "99999999-8888-7777-6666-555555555555");
+        assert!(list[1].up);
+        assert!(!list[0].up);
+        assert_eq!(list_wfd_adapters(A1).len(), 1);
+        assert!(list_wfd_adapters("").is_empty());
+        assert!(list_wfd_adapters("[]").is_empty());
+        assert!(list_wfd_adapters("Access denied").is_empty());
         assert!(go_adapter_script().contains("Microsoft Wi-Fi Direct Virtual Adapter"));
         assert!(go_adapter_script().contains("-IncludeHidden"));
+        assert!(!go_adapter_script().contains("-eq 'Up'"));
+    }
+
+    #[test]
+    fn pick_go_adapter_prefers_newly_up_then_any_up() {
+        let before = list_wfd_adapters(&format!("[{A1_UP},{A2_DOWN}]"));
+        // #1 was already Up for another reason (Miracast); #2 came up for us.
+        let after = list_wfd_adapters(&format!("[{A1_UP},{A2_UP}]"));
+        assert_eq!(pick_go_adapter(&before, &after).map(|a| a.name), Some("Local Area Connection* 2".into()));
+        // Nothing changed but one is Up: take it.
+        let after2 = list_wfd_adapters(&format!("[{A1},{A2_UP}]"));
+        assert_eq!(pick_go_adapter(&[], &after2).map(|a| a.guid), Some("99999999-8888-7777-6666-555555555555".into()));
+        // Nothing Up: none.
+        assert!(pick_go_adapter(&before, &list_wfd_adapters(&format!("[{A1},{A2_DOWN}]"))).is_none());
+    }
+
+    #[test]
+    fn fallback_only_before_sharing_was_touched() {
+        assert!(StartFail::ApStart("radio off".into()).allows_mobile_fallback());
+        assert!(!StartFail::AfterAp("UAC cancelled".into()).allows_mobile_fallback());
+        assert_eq!(StartFail::AfterAp("x".into()).message(), "x");
+        assert!(is_resource_in_use(abort_reason(2)));
+        assert!(!is_resource_in_use(abort_reason(1)));
+    }
+
+    #[test]
+    fn random_passphrase_is_long_enough() {
+        let p = random_passphrase();
+        assert_eq!(p.chars().count(), 12);
+        assert!(p.chars().all(|c| c.is_ascii_alphanumeric()));
+        assert_ne!(random_passphrase(), p);
     }
 
     #[cfg(not(windows))]

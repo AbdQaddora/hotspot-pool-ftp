@@ -244,52 +244,94 @@ async fn get_hotspot_info() -> HotspotInfo {
 /// MyPublicWiFi does it: Mobile Hotspot off, Wi-Fi Direct AP on with the same
 /// SSID/password, ICS from the upstream to the AP's adapter, then wait for
 /// Windows to give the adapter 192.168.137.1.
-async fn wifidirect_on(app: &AppHandle, preferred: Option<String>) -> Result<HotspotInfo, String> {
-    let base = tauri::async_runtime::spawn_blocking(hotspot::mobile_info).await.map_err(|e| e.to_string())?;
-    if base.state == "on" {
+async fn wifidirect_on(app: &AppHandle, preferred: Option<String>) -> Result<HotspotInfo, wfd::StartFail> {
+    use wfd::StartFail::{AfterAp, ApStart};
+    fn join<E: std::fmt::Display>(e: E) -> wfd::StartFail {
+        wfd::StartFail::ApStart(e.to_string())
+    }
+    let base = tauri::async_runtime::spawn_blocking(hotspot::mobile_info).await.map_err(join)?;
+    let mut mobile_was_on = false;
+    if base.state == "on" || base.state == "transition" {
         http::emit_log(app, "info", "server", "Turning off Mobile Hotspot (it cannot run together with the access point)…");
-        tauri::async_runtime::spawn_blocking(|| hotspot::set_enabled(false, None)).await.map_err(|e| e.to_string())??;
+        tauri::async_runtime::spawn_blocking(|| hotspot::set_enabled(false, None)).await.map_err(join)?.map_err(ApStart)?;
+        mobile_was_on = true;
     }
     let ssid = base.ssid.clone().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| "Hotspot Pool".into());
-    let passphrase = base.passphrase.clone().filter(|p| p.chars().count() >= 8).unwrap_or_else(|| "sharefiles".into());
+    let passphrase = match base.passphrase.clone().filter(|p| p.chars().count() >= 8) {
+        Some(p) => p,
+        None => {
+            let p = wfd::random_passphrase();
+            http::emit_log(app, "warn", "server", format!("Windows has no saved hotspot password; using {p} for this session (set one in Settings)"));
+            p
+        }
+    };
+
+    // Snapshot the Wi-Fi Direct adapters first: the group owner's one is the one that comes Up.
+    let before = tauri::async_runtime::spawn_blocking(wfd::wfd_adapters).await.map_err(join)?;
     http::emit_log(app, "info", "server", "Starting the access point…");
-    let (s, p) = (ssid.clone(), passphrase.clone());
-    tauri::async_runtime::spawn_blocking(move || wfd::start(&s, &p)).await.map_err(|e| e.to_string())??;
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        let (s, p) = (ssid.clone(), passphrase.clone());
+        match tauri::async_runtime::spawn_blocking(move || wfd::start(&s, &p)).await.map_err(join)? {
+            Ok(_) => break,
+            // Right after Mobile Hotspot stops, the radio can still be busy for a moment.
+            Err(e) if wfd::is_resource_in_use(&e) && mobile_was_on && attempt < 3 => {
+                http::emit_log(app, "info", "server", "Wi-Fi adapter still busy; retrying in 2 s…");
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+            Err(e) => return Err(ApStart(e)),
+        }
+    }
     http::emit_log(app, "success", "server", format!("Access point \"{ssid}\" is on"));
 
     // Windows brings the group-owner adapter up a moment after the AP starts.
     let mut adapter = None;
+    let mut last = Vec::new();
     for _ in 0..10 {
-        match tauri::async_runtime::spawn_blocking(wfd::find_go_adapter).await.map_err(|e| e.to_string())? {
-            Ok(a) => {
-                adapter = Some(a);
-                break;
-            }
-            Err(_) => tokio::time::sleep(Duration::from_millis(800)).await,
+        let after = tauri::async_runtime::spawn_blocking(wfd::wfd_adapters).await.map_err(join)?;
+        if let Some(a) = wfd::pick_go_adapter(&before, &after) {
+            adapter = Some(a);
+            break;
         }
+        last = after;
+        tokio::time::sleep(Duration::from_millis(800)).await;
     }
-    let Some((adapter_name, adapter_id)) = adapter else { return Err("Windows did not bring up the access point's network adapter.".into()) };
-    http::emit_log(app, "info", "server", format!("Access point adapter: {adapter_name}"));
+    let Some(adapter) = adapter else {
+        return Err(ApStart(format!("Windows did not bring up the access point's network adapter (Wi-Fi Direct adapters: {}).", wfd::describe_adapters(&last))));
+    };
+    let adapter_id = adapter.guid.clone();
+    http::emit_log(app, "info", "server", format!("Access point adapter: {}", adapter.name));
 
     let sel = preferred.clone();
-    let snap = tauri::async_runtime::spawn_blocking(move || ics::snapshot(sel.as_deref(), true)).await.map_err(|e| e.to_string())?;
-    let Some(public) = snap.effective_upstream.clone() else { return Err("Connect the laptop to the internet first.".into()) };
+    let snap = tauri::async_runtime::spawn_blocking(move || ics::snapshot(sel.as_deref(), true)).await.map_err(|e| AfterAp(e.to_string()))?;
+    let Some(public) = snap.effective_upstream.clone() else { return Err(AfterAp("Connect the laptop to the internet first.".into())) };
     let upstream_name = snap.upstreams.iter().find(|u| u.id == public).map(|u| u.name.clone()).unwrap_or_else(|| "the internet connection".into());
     let already = snap.sharing.available && snap.sharing.public_id.as_deref() == Some(public.as_str()) && snap.sharing.private_id.as_deref() == Some(adapter_id.as_str());
-    if !already {
-        http::emit_log(app, "info", "server", format!("Sharing {upstream_name} with the access point (Windows will ask for permission)…"));
-        let (pu, pr) = (public.clone(), adapter_id.clone());
-        tauri::async_runtime::spawn_blocking(move || ics::apply_sharing(&pu, &pr)).await.map_err(|e| e.to_string())??;
-    }
+    let apply = |app: AppHandle, public: String, private: String, upstream_name: String| async move {
+        http::emit_log(&app, "info", "server", format!("Sharing {upstream_name} with the access point (Windows will ask for permission)…"));
+        tauri::async_runtime::spawn_blocking(move || ics::apply_sharing(&public, &private)).await.map_err(|e| AfterAp(e.to_string()))?.map_err(AfterAp)
+    };
+    let wait = |adapter_id: String, secs: u64| async move { tauri::async_runtime::spawn_blocking(move || ics::wait_for_gateway(&adapter_id, Duration::from_secs(secs))).await.map_err(|e| AfterAp(e.to_string())) };
 
     http::emit_log(app, "info", "server", "Waiting for Windows to give the access point its address…");
-    let id = adapter_id.clone();
-    let found = tauri::async_runtime::spawn_blocking(move || ics::wait_for_gateway(&id, Duration::from_secs(20))).await.map_err(|e| e.to_string())?;
+    let mut found = if already {
+        // Windows remembered the pairing; it usually re-addresses the adapter by itself…
+        wait(adapter_id.clone(), 8).await?
+    } else {
+        apply(app.clone(), public.clone(), adapter_id.clone(), upstream_name.clone()).await?;
+        wait(adapter_id.clone(), 20).await?
+    };
+    if found.is_none() && already {
+        // …but not always ("stuck on 169.254.x.x"): re-apply once, which disables and re-enables sharing.
+        apply(app.clone(), public.clone(), adapter_id.clone(), upstream_name.clone()).await?;
+        found = wait(adapter_id.clone(), 20).await?;
+    }
     if found.is_none() {
-        return Err("Windows did not give the access point its address (192.168.137.1). Open Share Wi-Fi and click Fix sharing, then try again.".into());
+        return Err(AfterAp("Windows did not give the access point its address (192.168.137.1). Open Share Wi-Fi and click Fix sharing, then try again.".into()));
     }
     http::emit_log(app, "success", "server", format!("Access point ready at 192.168.137.1; devices get the laptop's internet through {upstream_name}"));
-    tauri::async_runtime::spawn_blocking(hotspot::info).await.map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(hotspot::info).await.map_err(|e| AfterAp(e.to_string()))
 }
 
 /// Turn the hotspot on with the configured engine; the access point engine
@@ -302,9 +344,18 @@ async fn hotspot_on(app: &AppHandle, engine: &Arc<ServerEngine>) -> Result<Hotsp
             Ok(info) => return Ok(info),
             Err(e) => {
                 tauri::async_runtime::spawn_blocking(wfd::stop).await.map_err(|e| e.to_string())?;
-                http::emit_log(app, "warn", "server", format!("Access point not usable: {e} Using Windows Mobile Hotspot instead."));
+                if !e.allows_mobile_fallback() {
+                    // Sharing has been touched: Mobile Hotspot on top of classic ICS is the conflict we are avoiding.
+                    return Err(e.message().to_string());
+                }
+                http::emit_log(app, "warn", "server", format!("{} — using Windows Mobile Hotspot instead.", e.message()));
             }
         }
+    }
+    let shared = tauri::async_runtime::spawn_blocking(|| ics::sharing_state_cached(false)).await.map_err(|e| e.to_string())?;
+    if let Some(public) = shared.public_id.as_deref() {
+        let name = shared.connections.iter().find(|c| c.id == public).map(|c| c.name.clone()).unwrap_or_else(|| "a connection".into());
+        http::emit_log(app, "warn", "server", format!("Internet Connection Sharing is still enabled on {name}; Windows Mobile Hotspot may refuse to share internet while it is. Turn sharing off in Network Connections if phones get no internet."));
     }
     http::emit_log(app, "info", "server", "Turning on Mobile Hotspot…");
     let info = tauri::async_runtime::spawn_blocking(move || hotspot::set_enabled(true, preferred.as_deref())).await.map_err(|e| e.to_string())??;
@@ -393,7 +444,13 @@ struct ShareResult {
 async fn auto_share(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, ip: Option<String>) -> Result<ShareResult, String> {
     let mut info = tauri::async_runtime::spawn_blocking(hotspot::info).await.map_err(|e| e.to_string())?;
     let mut hotspot_started = false;
-    if info.supported && info.state != "on" {
+    // A Windows Mobile Hotspot that is already on must not be inherited by the access point engine: it would not share internet.
+    let settings = engine.settings();
+    let wrong_engine = cfg!(windows) && settings.hotspot_engine == settings::ENGINE_WIFIDIRECT && info.state == "on" && !wfd::info().running;
+    if info.supported && (info.state != "on" || wrong_engine) {
+        if wrong_engine {
+            http::emit_log(&app, "info", "server", "Switching from Windows Mobile Hotspot to the access point…");
+        }
         info = hotspot_on(&app, engine.inner()).await?;
         hotspot_started = true;
     }
@@ -525,6 +582,8 @@ pub fn run() {
                 tauri::async_runtime::block_on(async move {
                     let _ = engine.stop(app).await;
                 });
+                // Unlike Mobile Hotspot, our access point lives in this process.
+                wfd::stop();
             }
         })
         .run(tauri::generate_context!())

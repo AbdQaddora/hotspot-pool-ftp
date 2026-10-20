@@ -131,6 +131,11 @@ export function WifiTab({ wifi, hotspot, settings, busy, onToggleHotspot, onSave
             )}
           </div>
         </div>
+        {hotspot.supported && hotspot.error && !hotspotOn && (
+          <div className="flex items-center gap-2 border-t border-warn/30 bg-warn/10 px-5 py-2 text-[12px] text-warn">
+            <AlertTriangle className="size-3.5 shrink-0" /> {hotspot.error}
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border bg-background/60 px-5 py-2.5 text-[12px]">
           <span className="flex items-center gap-1.5 text-muted-foreground">
             Hotspot
