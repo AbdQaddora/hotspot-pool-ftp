@@ -47,9 +47,14 @@ function CopyBtn({ value, label, size = "xs" }: { value: string | null; label: s
 export function ShareTab({ status, hotspot, settings, busy, phase, nameBusy, onToggle, onSetupName, onCheckName, onGoSettings, onSaveSettings }: Props) {
   const [showPass, setShowPass] = useState(false);
   const hotspotOn = hotspot.state === "on";
-  const nameOk = status.running && status.nameResolves === true;
+  // Files-only on the app's own access point: no DNS proxy, so the name can never work there.
+  const noDns = !settings.shareInternet && settings.hotspotEngine === "wifidirect";
+  const nameProblem = status.running ? (status.nameError ?? (noDns ? "Share internet is off, so the hotspot has no DNS for phones and the name cannot work. Phones type the IP instead." : null)) : null;
+  const nameOk = status.running && status.nameResolves === true && !nameProblem;
   const primary = nameOk ? status.nameUrl : status.url;
-  const typed = nameOk ? status.name : status.ip;
+  /** What the phone types: the link without its scheme, so a fallback port such as :8080 stays visible. */
+  const typed = primary ? primary.replace(/^https?:\/\//, "") : null;
+  const oddPort = status.running && status.port != null && status.port !== 80 ? status.port : null;
   const pageQr = primary ?? `http://${settings.name}.${settings.suffix}`;
   const phaseText = { idle: "", hotspot: "Turning on the hotspot…", server: "Starting the server…", stopping: "Stopping…" }[phase];
 
@@ -99,13 +104,13 @@ export function ShareTab({ status, hotspot, settings, busy, phase, nameBusy, onT
               <Badge variant="outline">{settings.name}.{settings.suffix}</Badge>
             ) : nameBusy ? (
               <Badge variant="outline"><Loader2 className="size-3 animate-spin" /> checking</Badge>
-            ) : status.nameResolves ? (
+            ) : nameOk ? (
               <Badge variant="live"><CheckCircle2 className="size-3" /> {status.name}</Badge>
             ) : (
-              <Badge variant="warn"><AlertTriangle className="size-3" /> {status.name} not resolving</Badge>
+              <Badge variant="warn"><AlertTriangle className="size-3" /> {status.name} {nameProblem ? "not usable" : "not resolving"}</Badge>
             )}
           </span>
-          {status.running && status.nameResolves === false && (
+          {status.running && (status.nameResolves === false || nameProblem) && (
             <span className="flex items-center gap-1">
               <Button size="sm" variant="outline" onClick={onSetupName} disabled={nameBusy}>Set up name (admin)</Button>
               <Button size="xs" variant="ghost" onClick={onCheckName} disabled={nameBusy} aria-label="Check again"><RefreshCw /></Button>
@@ -121,6 +126,12 @@ export function ShareTab({ status, hotspot, settings, busy, phase, nameBusy, onT
             <CopyBtn value={status.url} label="Copy IP link" />
           </span>
         </div>
+        {nameProblem && (
+          <div className="flex items-start gap-2 border-t border-warn/30 bg-warn/10 px-5 py-2 text-[12px] text-warn">
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+            <span>{nameProblem}</span>
+          </div>
+        )}
       </Card>
 
       {/* Link */}
@@ -129,7 +140,15 @@ export function ShareTab({ status, hotspot, settings, busy, phase, nameBusy, onT
           <div className="min-w-0 flex-1">
             <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Link for the phone</div>
             <div className={cn("mt-1 truncate font-mono text-[22px] font-semibold tracking-tight", status.running ? "text-live" : "text-muted-foreground")}>{primary ?? `http://${settings.name}.${settings.suffix}`}</div>
-            {status.running && !nameOk && <div className="mt-1 text-[12px] text-muted-foreground">Showing the IP until the name resolves on the hotspot.</div>}
+            {status.running && !nameOk && (
+              <div className={cn("mt-1 text-[12px]", nameProblem ? "text-warn" : "text-muted-foreground")}>{nameProblem ? "Showing the IP because the name is not usable right now." : "Showing the IP until the name resolves on the hotspot."}</div>
+            )}
+            {oddPort && (
+              <div className="mt-1 flex items-start gap-1.5 text-[12px] text-warn">
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                <span>Port 80 is in use by another program, so phones must include <span className="font-mono">:{oddPort}</span> after the address.</span>
+              </div>
+            )}
           </div>
           <CopyBtn value={primary} label="Copy link" size="sm" />
           <Button variant="outline" size="sm" onClick={() => primary && openUrl(primary)} disabled={!primary}>
@@ -173,6 +192,7 @@ export function ShareTab({ status, hotspot, settings, busy, phase, nameBusy, onT
               <div>
                 <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Type this</div>
                 <div className="truncate font-mono text-[14px] font-medium">{typed ?? `${settings.name}.${settings.suffix}`}</div>
+                {oddPort && <div className="text-[11.5px] leading-snug text-warn">Include the <span className="font-mono">:{oddPort}</span> part. Port 80 is taken by another program.</div>}
               </div>
               <p className="text-[12px] leading-snug text-muted-foreground">Tap a file to download it. Folders open in place. Images, video and audio preview inside the page.</p>
             </div>

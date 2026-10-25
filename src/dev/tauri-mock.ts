@@ -41,6 +41,17 @@ let inbox = [
 ];
 const inboxInfo = () => ({ dir: "C:\\Users\\abd\\AppData\\Roaming\\com.hotspotpool.ftp\\inbox", usedBytes: inbox.reduce((a, i) => a + i.size, 0), quotaBytes: settings.inboxQuotaMb * 1024 * 1024, pending: inbox.length });
 let nameResolves: boolean | null = null;
+// Failure states for screenshots: ?nameFail (hosts write cancelled) and ?port=8080 (port 80 taken).
+const mockFlags = new URLSearchParams(location.search);
+const mockPort = Number(mockFlags.get("port")) || 80;
+const mockNameFail = mockFlags.has("nameFail");
+const mockUrl = (host: string) => `http://${host}${mockPort === 80 ? "" : `:${mockPort}`}`;
+const nameError = () =>
+  mockNameFail
+    ? "The hosts file could not be updated (the admin prompt was cancelled), so phones cannot use the name yet."
+    : !settings.shareInternet && settings.hotspotEngine === "wifidirect"
+      ? "Share internet is off, so the hotspot has no DNS for phones and the name cannot work. Type the IP instead."
+      : null;
 let mockShared = false;
 const upstreams = [
   { id: "abcdef01-1234-5678-9abc-def012345678", name: "CafeNet", kind: "wifi", connectivity: "internet", isDefault: true },
@@ -78,8 +89,8 @@ const wifiStatus = () => {
 };
 const ftpStatus = () =>
   running
-    ? { running: true, ip: "192.168.137.1", port: 80, url: "http://192.168.137.1", name: `${settings.name}.${settings.suffix}`, nameUrl: `http://${settings.name}.${settings.suffix}`, nameResolves, hostnameUrl: nameResolves ? "http://abd-laptop" : null }
-    : { running: false, ip: null, port: null, url: null, name: `${settings.name}.${settings.suffix}`, nameUrl: null, nameResolves: null, hostnameUrl: null };
+    ? { running: true, ip: "192.168.137.1", port: mockPort, url: mockUrl("192.168.137.1"), name: `${settings.name}.${settings.suffix}`, nameUrl: mockUrl(`${settings.name}.${settings.suffix}`), nameResolves: nameError() ? false : nameResolves, nameError: nameError(), hostnameUrl: nameResolves ? mockUrl("abd-laptop") : null }
+    : { running: false, ip: null, port: null, url: null, name: `${settings.name}.${settings.suffix}`, nameUrl: null, nameResolves: null, nameError: null, hostnameUrl: null };
 const log = (level: string, kind: string, message: string, extra: Record<string, unknown> = {}) =>
   emit("server_log", { ts: Date.now(), level, kind, message, client: null, path: null, bytes: null, ...extra });
 
@@ -89,7 +100,7 @@ function startSim() {
   connected = 2;
   total = 0;
   peak = 0;
-  log("success", "server", "Sharing at http://192.168.137.1:8080");
+  log("success", "server", `Sharing at ${mockUrl("192.168.137.1")}`);
   setTimeout(() => log("success", "connect", "Device 192.168.137.23 connected (1 online)", { client: "192.168.137.23" }), 300);
   setTimeout(() => log("success", "connect", "Device 192.168.137.41 connected (2 online)", { client: "192.168.137.41" }), 900);
   let t = 0;
@@ -145,8 +156,8 @@ async function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<
       return settings;
     case "setup_name":
       await new Promise((r) => setTimeout(r, 400));
-      nameResolves = true;
-      log("success", "server", `${settings.name}.${settings.suffix} resolves on the hotspot`);
+      nameResolves = !nameError();
+      log(nameResolves ? "success" : "warn", "server", nameResolves ? `${settings.name}.${settings.suffix} resolves on the hotspot` : (nameError() as string));
       return ftpStatus();
     case "check_name":
       return ftpStatus();
@@ -178,7 +189,7 @@ async function invoke(cmd: string, args: Record<string, unknown> = {}): Promise<
       hotspotOn = true;
       await new Promise((r) => setTimeout(r, 300));
       startSim();
-      nameResolves = true;
+      nameResolves = !nameError();
       emit("server_status", ftpStatus());
       return { hotspot: hotspotInfo(), status: ftpStatus(), hotspotStarted: started };
     }

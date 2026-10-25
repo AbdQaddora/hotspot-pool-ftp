@@ -371,9 +371,15 @@ pub fn is_gateway(i: &crate::network::NetInterface, adapter_id: &str) -> bool {
 
 /// Blocking: poll the interface list until the adapter holds 192.168.137.1.
 pub fn wait_for_gateway(adapter_id: &str, timeout: std::time::Duration) -> Option<crate::network::NetInterface> {
+    wait_for(timeout, |i| is_gateway(i, adapter_id))
+}
+
+/// Blocking: poll the interface list (every 500 ms, until `timeout`) for an
+/// interface matching `pred`.
+pub fn wait_for(timeout: std::time::Duration, pred: impl Fn(&crate::network::NetInterface) -> bool) -> Option<crate::network::NetInterface> {
     let deadline = std::time::Instant::now() + timeout;
     loop {
-        if let Some(i) = crate::network::list_interfaces().into_iter().find(|i| is_gateway(i, adapter_id)) {
+        if let Some(i) = crate::network::list_interfaces().into_iter().find(|i| pred(i)) {
             return Some(i);
         }
         if std::time::Instant::now() >= deadline {
@@ -495,7 +501,7 @@ pub fn snapshot_with_engine(selected: Option<&str>, fresh: bool, engine: &str) -
     let ap = crate::wfd::info();
     let ap_error = crate::wfd::last_failure();
     let hotspot = crate::hotspot::info();
-    let hotspot_adapter = crate::network::list_interfaces().into_iter().find(|i| i.is_hotspot);
+    let hotspot_adapter = crate::network::hotspot_adapter_candidate(crate::network::list_interfaces());
     let upstreams = without_adapter(list_upstreams(), hotspot_adapter.as_ref().and_then(|a| a.adapter_id.as_deref()));
     let effective = effective_upstream(selected, &upstreams).cloned();
     let sharing = sharing_state_cached(fresh);
@@ -559,6 +565,19 @@ mod tests {
     const A: &str = "abcdef01-1234-5678-9abc-def012345678";
     const B: &str = "11111111-2222-3333-4444-555555555555";
     const H: &str = "99999999-8888-7777-6666-555555555555";
+
+    #[test]
+    fn wait_for_returns_a_matching_interface_before_the_deadline() {
+        let found = wait_for(std::time::Duration::from_secs(2), |i| i.is_loopback);
+        assert!(found.is_some(), "every machine has a loopback interface");
+    }
+
+    #[test]
+    fn wait_for_gives_up_at_the_deadline() {
+        let start = std::time::Instant::now();
+        assert!(wait_for(std::time::Duration::from_millis(600), |_| false).is_none());
+        assert!(start.elapsed() >= std::time::Duration::from_millis(600));
+    }
 
     #[test]
     fn norm_guid_forms() {

@@ -254,7 +254,7 @@ async fn get_hotspot_info() -> HotspotInfo {
 /// MyPublicWiFi does it: Mobile Hotspot off, Wi-Fi Direct AP on with the same
 /// SSID/password, ICS from the upstream to the AP's adapter, then wait for
 /// Windows to give the adapter 192.168.137.1.
-async fn wifidirect_on(app: &AppHandle, preferred: Option<String>, share_internet: bool) -> Result<HotspotInfo, wfd::StartFail> {
+async fn wifidirect_on(app: &AppHandle, preferred: Option<String>, share_internet: bool, share_name: String) -> Result<HotspotInfo, wfd::StartFail> {
     use wfd::StartFail::{AfterAp, ApStart};
     fn join<E: std::fmt::Display>(e: E) -> wfd::StartFail {
         wfd::StartFail::ApStart(e.to_string())
@@ -338,8 +338,13 @@ async fn wifidirect_on(app: &AppHandle, preferred: Option<String>, share_interne
         apply(app.clone(), public.clone(), adapter_id.clone(), upstream_name.clone()).await?;
         wait(adapter_id.clone(), 20).await?
     };
+    if found.is_some() && already && !hotspot_dns_answers(ICS_GATEWAY, &share_name, 6, Duration::from_secs(1)).await {
+        // The static 192.168.137.1 outlives SharedAccess: the address can be back while its DHCP/DNS proxy is not.
+        http::emit_log(app, "info", "server", "Internet sharing looked paired but its DNS was not answering; re-applying");
+        found = None;
+    }
     if found.is_none() && already {
-        // …but not always ("stuck on 169.254.x.x"): re-apply once, which disables and re-enables sharing.
+        // …but not always ("stuck on 169.254.x.x", or a dead DNS proxy): re-apply once, which disables and re-enables sharing.
         apply(app.clone(), public.clone(), adapter_id.clone(), upstream_name.clone()).await?;
         found = wait(adapter_id.clone(), 20).await?;
     }
@@ -357,7 +362,7 @@ async fn hotspot_on(app: &AppHandle, engine: &Arc<ServerEngine>) -> Result<Hotsp
     let preferred = settings.upstream_adapter.clone();
     let share_internet = settings.share_internet;
     if settings.hotspot_engine == settings::ENGINE_WIFIDIRECT && cfg!(windows) {
-        match wifidirect_on(app, preferred.clone(), share_internet).await {
+        match wifidirect_on(app, preferred.clone(), share_internet, settings.full_name()).await {
             Ok(info) => {
                 wfd::set_last_failure(None);
                 return Ok(info);
@@ -383,8 +388,40 @@ async fn hotspot_on(app: &AppHandle, engine: &Arc<ServerEngine>) -> Result<Hotsp
     }
     http::emit_log(app, "info", "server", "Turning on Mobile Hotspot…");
     let info = tauri::async_runtime::spawn_blocking(move || hotspot::set_enabled(true, preferred.as_deref())).await.map_err(|e| e.to_string())??;
-    http::emit_log(app, "success", "server", format!("Hotspot \"{}\" is on", info.ssid.clone().unwrap_or_default()));
+    // `set_enabled` returns before WinNAT addresses the adapter; binding earlier would pick 169.254.x.x.
+    http::emit_log(app, "info", "server", "Waiting for Windows to give the hotspot its address…");
+    let gateway = tauri::async_runtime::spawn_blocking(|| ics::wait_for(Duration::from_secs(20), |i| i.ip == ICS_GATEWAY.to_string())).await.map_err(|e| e.to_string())?;
+    if gateway.is_none() {
+        return Err(format!("Windows Mobile Hotspot is on but its adapter never got its address ({ICS_GATEWAY}). Turn the hotspot off and on, then try again."));
+    }
+    http::emit_log(app, "success", "server", format!("Hotspot \"{}\" is on at {ICS_GATEWAY}", info.ssid.clone().unwrap_or_default()));
     Ok(info)
+}
+
+/// The gateway address Windows Internet Connection Sharing (and Mobile Hotspot) gives the shared adapter.
+const ICS_GATEWAY: std::net::Ipv4Addr = std::net::Ipv4Addr::new(192, 168, 137, 1);
+
+/// True once the ICS DNS proxy at `server` answers at all: any reply, even
+/// "no such name", proves it is listening, so a proxy that does not know the
+/// share name or the laptop's hostname does not trigger a needless re-apply
+/// (and UAC prompt). Retries `attempts` times, `pause` apart.
+async fn hotspot_dns_answers(server: std::net::Ipv4Addr, share_name: &str, attempts: u32, pause: Duration) -> bool {
+    let server = std::net::IpAddr::V4(server);
+    let host = names::hostname();
+    for attempt in 1..=attempts {
+        if names::dns_responds(server, share_name).await {
+            return true;
+        }
+        if let Some(h) = &host {
+            if names::dns_responds(server, h).await {
+                return true;
+            }
+        }
+        if attempt < attempts {
+            tokio::time::sleep(pause).await;
+        }
+    }
+    false
 }
 
 /// Turn off whichever hotspot is running.
@@ -558,12 +595,15 @@ async fn auto_share(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, ip: Op
         hotspot_started = true;
     }
 
-    // Prefer the explicit adapter; otherwise wait for a hotspot gateway to appear.
+    // Prefer the explicit adapter; otherwise wait for a hotspot gateway to appear
+    // (`is_hotspot` requires a real gateway address, never 169.254.x.x). Give a
+    // hotspot that was just turned on longer to be addressed.
     let bind_ip = match ip {
         Some(ip) => Some(ip),
         None => {
+            let polls = if hotspot_started { 100 } else { 40 }; // x 250 ms: 25 s / 10 s
             let mut found = None;
-            for _ in 0..40 {
+            for _ in 0..polls {
                 if let Some(i) = network::list_interfaces().into_iter().find(|i| i.is_hotspot) {
                     found = Some(i.ip);
                     break;
@@ -571,10 +611,14 @@ async fn auto_share(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, ip: Op
                 tokio::time::sleep(Duration::from_millis(250)).await;
             }
             if found.is_none() {
-                if info.supported {
-                    http::emit_log(&app, "warn", "server", "Hotspot adapter not found yet; using the best available adapter");
+                let fallback = network::detect_hotspot();
+                // Expected where the app cannot run a hotspot (macOS/Linux); a real problem on Windows.
+                let level = if info.supported { "warn" } else { "info" };
+                match &fallback {
+                    Some(i) => http::emit_log(&app, level, "server", format!("No hotspot adapter with a gateway address was found; sharing on {} ({}) instead. Devices on the hotspot may not reach it.", i.ip, i.name)),
+                    None => http::emit_log(&app, "warn", "server", "No network adapter found to share on."),
                 }
-                found = network::detect_hotspot().map(|i| i.ip);
+                found = fallback.map(|i| i.ip);
             }
             found
         }
