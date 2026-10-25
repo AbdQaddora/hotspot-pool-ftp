@@ -1,0 +1,68 @@
+name: Bug report
+description: Something does not work. Bug fixes start here, before any branch or pull request.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please search existing issues first. A maintainer confirms the bug before a fix is started; see CONTRIBUTING.md.
+  - type: input
+    id: version
+    attributes:
+      label: Hotspot Pool version
+      placeholder: "e.g. 0.12.1 (Settings tab or the installer file name)"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "e.g. Windows 11 23H2, macOS 15, Ubuntu 24.04"
+    validations:
+      required: true
+  - type: dropdown
+    id: build
+    attributes:
+      label: Which build
+      options:
+        - Release from the Releases page (files only)
+        - Built from the dev branch
+        - Built from the ttl branch (internet sharing)
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Add a folder to the pool
+        2. Flip the Server switch
+        3. On the phone, type abdu.link
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Activity log / diagnostics
+      description: Paste the relevant lines from the Activity tab. On a ttl-branch build also paste the report from Share Wi-Fi → **Copy diagnostics**.
+      render: text
+  - type: input
+    id: phone
+    attributes:
+      label: Phone and browser
+      placeholder: "e.g. Pixel 8, Chrome 130"
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: MyPublicWiFi (or another hotspot tool) was NOT running at the same time.

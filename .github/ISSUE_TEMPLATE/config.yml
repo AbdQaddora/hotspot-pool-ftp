@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or idea that is not a bug or feature yet
+    url: https://github.com/AbdQaddora/hotspot-pool-ftp/discussions
+    about: Use Discussions for questions and open-ended ideas.
