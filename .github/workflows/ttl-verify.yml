@@ -4,7 +4,7 @@ name: TTL build check
 # the WinDivert driver (the only place the driver is fetched).
 on:
   push:
-    branches: [ttl-normalize]
+    branches: [ttl]
   workflow_dispatch:
 
 jobs:
