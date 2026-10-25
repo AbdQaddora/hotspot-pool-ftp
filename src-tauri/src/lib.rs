@@ -277,12 +277,15 @@ async fn auto_share(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, ip: Op
         http::emit_log(&app, "success", "server", format!("Hotspot \"{}\" is on", info.ssid.clone().unwrap_or_default()));
     }
 
-    // Prefer the explicit adapter; otherwise wait for a hotspot gateway to appear.
+    // Prefer the explicit adapter; otherwise wait for a hotspot gateway to appear
+    // (`is_hotspot` requires a real gateway address, never 169.254.x.x). Give a
+    // hotspot that was just turned on longer to be addressed.
     let bind_ip = match ip {
         Some(ip) => Some(ip),
         None => {
+            let polls = if hotspot_started { 100 } else { 40 }; // x 250 ms: 25 s / 10 s
             let mut found = None;
-            for _ in 0..40 {
+            for _ in 0..polls {
                 if let Some(i) = network::list_interfaces().into_iter().find(|i| i.is_hotspot) {
                     found = Some(i.ip);
                     break;
@@ -290,10 +293,14 @@ async fn auto_share(app: AppHandle, engine: State<'_, Arc<ServerEngine>>, ip: Op
                 tokio::time::sleep(Duration::from_millis(250)).await;
             }
             if found.is_none() {
-                if info.supported {
-                    http::emit_log(&app, "warn", "server", "Hotspot adapter not found yet; using the best available adapter");
+                let fallback = network::detect_hotspot();
+                // Expected where the app cannot run a hotspot (macOS/Linux); a real problem on Windows.
+                let level = if info.supported { "warn" } else { "info" };
+                match &fallback {
+                    Some(i) => http::emit_log(&app, level, "server", format!("No hotspot adapter with a gateway address was found; sharing on {} ({}) instead. Devices on the hotspot may not reach it.", i.ip, i.name)),
+                    None => http::emit_log(&app, "warn", "server", "No network adapter found to share on."),
                 }
-                found = network::detect_hotspot().map(|i| i.ip);
+                found = fallback.map(|i| i.ip);
             }
             found
         }

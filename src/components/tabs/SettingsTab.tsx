@@ -108,6 +108,12 @@ export function SettingsTab({ status, settings, hotspot, interfaces, selectedIp,
                 </Button>
               )}
             </Row>
+            {status.running && status.nameError && (
+              <p className="flex items-start gap-2 rounded-md border border-warn/30 bg-warn/10 px-3 py-2 text-[12px] leading-snug text-warn">
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                <span>{status.nameError}</span>
+              </p>
+            )}
           </form>
         </CardBody>
       </Card>

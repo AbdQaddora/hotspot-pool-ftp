@@ -47,7 +47,7 @@ export function Nav({ tab, onTab, status, stats, poolCount, inboxCount }: { tab:
           </span>
           <span className="text-[12px] font-medium">{status.running ? "Sharing" : "Not sharing"}</span>
         </div>
-        <div className="mt-1 truncate font-mono text-[11px] text-muted-foreground">{status.running ? (status.nameResolves ? status.nameUrl : status.url) : "Flip the switch to start"}</div>
+        <div className="mt-1 truncate font-mono text-[11px] text-muted-foreground">{status.running ? (status.nameResolves && !status.nameError ? status.nameUrl : status.url) : "Flip the switch to start"}</div>
       </div>
     </nav>
   );

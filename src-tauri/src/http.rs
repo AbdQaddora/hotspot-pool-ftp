@@ -53,6 +53,13 @@ const UNLOCK_TTL: Duration = Duration::from_secs(24 * 3600);
 const MAX_CONCURRENT_UPLOADS: u64 = 3;
 const PIN_MAX_ATTEMPTS: u32 = 5;
 const PIN_WINDOW: Duration = Duration::from_secs(60);
+/// Share-name verification: the ICS DNS proxy on the gateway can take a few
+/// seconds to come up after the hotspot adapter, so one probe is not enough.
+const NAME_PROBE_ATTEMPTS: u32 = 8;
+const NAME_PROBE_DELAY: Duration = Duration::from_secs(1);
+/// Background re-check while the name is still unresolved after start.
+const NAME_RECHECK_INTERVAL: Duration = Duration::from_secs(10);
+const NAME_RECHECK_BUDGET: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -70,6 +77,8 @@ pub struct ServerStatus {
     pub name_resolves: Option<bool>,
     /// `http://<laptop-hostname>[:port]` when the hotspot DNS resolves it.
     pub hostname_url: Option<String>,
+    /// Human-readable sentence explaining why the name is not usable, or null.
+    pub name_error: Option<String>,
 }
 
 fn url_for(host: &str, port: u16) -> String {
@@ -84,6 +93,35 @@ fn url_for(host: &str, port: u16) -> String {
 struct NameState {
     resolves: Option<bool>,
     hostname_url: Option<String>,
+    name_error: Option<String>,
+}
+
+fn build_status(settings: &Settings, ns: &NameState, addr: Option<SocketAddr>) -> ServerStatus {
+    let name = settings.full_name();
+    match addr {
+        Some(addr) => ServerStatus {
+            running: true,
+            ip: Some(addr.ip().to_string()),
+            port: Some(addr.port()),
+            url: Some(url_for(&addr.ip().to_string(), addr.port())),
+            name_url: Some(url_for(&name, addr.port())),
+            name: Some(name),
+            name_resolves: ns.resolves,
+            hostname_url: ns.hostname_url.clone(),
+            name_error: ns.name_error.clone(),
+        },
+        None => ServerStatus {
+            running: false,
+            ip: None,
+            port: None,
+            url: None,
+            name: Some(name),
+            name_url: None,
+            name_resolves: None,
+            hostname_url: None,
+            name_error: ns.name_error.clone(),
+        },
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -611,6 +649,8 @@ struct Running {
     addr: SocketAddr,
     shutdown: Option<oneshot::Sender<()>>,
     telemetry_task: tauri::async_runtime::JoinHandle<()>,
+    /// Re-probes the share name until it resolves (or the budget runs out).
+    name_task: tauri::async_runtime::JoinHandle<()>,
 }
 
 pub struct ServerEngine {
@@ -618,7 +658,7 @@ pub struct ServerEngine {
     telemetry: Arc<Telemetry>,
     running: Mutex<Option<Running>>,
     settings: Arc<Mutex<Settings>>,
-    name_state: Mutex<NameState>,
+    name_state: Arc<Mutex<NameState>>,
     uploads: Arc<UploadStore>,
 }
 
@@ -629,7 +669,7 @@ impl ServerEngine {
             telemetry: Arc::new(Telemetry::default()),
             running: Mutex::new(None),
             settings: Arc::new(Mutex::new(settings)),
-            name_state: Mutex::new(NameState::default()),
+            name_state: Arc::new(Mutex::new(NameState::default())),
             uploads,
         }
     }
@@ -667,29 +707,8 @@ impl ServerEngine {
     pub fn status(&self) -> ServerStatus {
         let settings = self.settings();
         let ns = self.name_state.lock().expect("name lock").clone();
-        let name = settings.full_name();
-        match self.running.lock().expect("server lock").as_ref() {
-            Some(r) => ServerStatus {
-                running: true,
-                ip: Some(r.addr.ip().to_string()),
-                port: Some(r.addr.port()),
-                url: Some(url_for(&r.addr.ip().to_string(), r.addr.port())),
-                name_url: Some(url_for(&name, r.addr.port())),
-                name: Some(name),
-                name_resolves: ns.resolves,
-                hostname_url: ns.hostname_url,
-            },
-            None => ServerStatus {
-                running: false,
-                ip: None,
-                port: None,
-                url: None,
-                name: Some(name),
-                name_url: None,
-                name_resolves: None,
-                hostname_url: None,
-            },
-        }
+        let addr = self.running.lock().expect("server lock").as_ref().map(|r| r.addr);
+        build_status(&settings, &ns, addr)
     }
 
     fn emit_status<R: Runtime>(&self, app: &AppHandle<R>) -> ServerStatus {
@@ -706,32 +725,88 @@ impl ServerEngine {
     }
 
     /// Ask the hotspot gateway DNS whether the share name (and the laptop's
-    /// hostname) resolve to us. Updates and emits the status.
+    /// hostname) resolve to us. Retries for a few seconds because the DNS
+    /// proxy may still be starting. Updates and emits the status.
     pub async fn verify_name<R: Runtime>(&self, app: &AppHandle<R>) -> ServerStatus {
+        self.verify_name_with(app, NAME_PROBE_ATTEMPTS, NAME_PROBE_DELAY).await
+    }
+
+    async fn verify_name_with<R: Runtime>(&self, app: &AppHandle<R>, attempts: u32, delay: Duration) -> ServerStatus {
         let Some((ip, port)) = self.running_ip() else { return self.emit_status(app) };
-        let name = self.settings().full_name();
-        let resolves = names::resolve_via(IpAddr::V4(ip), &name).await == Some(ip);
-        let hostname_url = match names::hostname() {
-            Some(h) if names::resolve_via(IpAddr::V4(ip), &h).await == Some(ip) => Some(url_for(&h, port)),
-            _ => None,
-        };
-        {
+        let settings = self.settings();
+        let name = settings.full_name();
+        let resolves = names::resolve_with_retry(IpAddr::V4(ip), &name, attempts, delay).await == Some(ip);
+        let hostname_url = Self::probe_hostname(ip, port).await;
+        let was_resolving = {
             let mut ns = self.name_state.lock().expect("name lock");
+            let was = ns.resolves == Some(true);
             ns.resolves = Some(resolves);
             ns.hostname_url = hostname_url;
-        }
+            if resolves {
+                ns.name_error = None;
+            }
+            was
+        };
         if resolves {
-            emit_log(app, "success", "server", format!("{name} resolves to {ip} on the hotspot"));
+            if !was_resolving {
+                emit_log(app, "success", "server", format!("{name} resolves to {ip} on the hotspot"));
+            }
         } else {
             emit_log(app, "warn", "server", format!("{name} does not resolve on the hotspot yet; phones can use the IP link"));
         }
         self.emit_status(app)
     }
 
+    /// Single probe for the laptop's hostname (the ICS proxy resolves it too).
+    async fn probe_hostname(ip: Ipv4Addr, port: u16) -> Option<String> {
+        match names::hostname() {
+            Some(h) if names::resolve_via(IpAddr::V4(ip), &h).await == Some(ip) => Some(url_for(&h, port)),
+            _ => None,
+        }
+    }
+
+    /// Background task: while the name is not known to resolve, probe it
+    /// every `NAME_RECHECK_INTERVAL` for up to `NAME_RECHECK_BUDGET` and push
+    /// the status when it flips. Aborted by `stop`.
+    fn spawn_name_recheck<R: Runtime>(&self, app: AppHandle<R>, addr: SocketAddr) -> tauri::async_runtime::JoinHandle<()> {
+        let settings = self.settings.clone();
+        let name_state = self.name_state.clone();
+        tauri::async_runtime::spawn(async move {
+            let IpAddr::V4(ip) = addr.ip() else { return };
+            let started = Instant::now();
+            while started.elapsed() < NAME_RECHECK_BUDGET {
+                tokio::time::sleep(NAME_RECHECK_INTERVAL).await;
+                if name_state.lock().expect("name lock").resolves == Some(true) {
+                    return;
+                }
+                let settings = settings.lock().expect("settings lock").clone();
+                let name = settings.full_name();
+                if names::resolve_via(IpAddr::V4(ip), &name).await != Some(ip) {
+                    continue;
+                }
+                let hostname_url = Self::probe_hostname(ip, addr.port()).await;
+                let status = {
+                    let mut ns = name_state.lock().expect("name lock");
+                    if ns.resolves == Some(true) {
+                        return; // verify_name got there first
+                    }
+                    ns.resolves = Some(true);
+                    ns.hostname_url = hostname_url;
+                    ns.name_error = None;
+                    build_status(&settings, &ns, Some(addr))
+                };
+                emit_log(&app, "success", "server", format!("{name} resolves to {ip} on the hotspot"));
+                let _ = app.emit(EV_STATUS, status);
+                return;
+            }
+        })
+    }
+
     /// Put the share name into the hosts file (UAC on Windows), then verify.
     pub async fn setup_name<R: Runtime>(&self, app: &AppHandle<R>) -> Result<ServerStatus, String> {
         let Some((ip, _)) = self.running_ip() else { return Err("Start sharing first.".into()) };
-        let name = self.settings().full_name();
+        let settings = self.settings();
+        let name = settings.full_name();
         let n = name.clone();
         let result = tauri::async_runtime::spawn_blocking(move || names::ensure_hosts_entry(&n, ip)).await.map_err(|e| e.to_string())?;
         match result {
@@ -739,6 +814,7 @@ impl ServerEngine {
             Ok(false) => {}
             Err(e) => {
                 emit_log(app, "warn", "server", e.clone());
+                self.name_state.lock().expect("name lock").name_error = Some(e.clone());
                 self.verify_name(app).await;
                 return Err(e);
             }
@@ -768,7 +844,7 @@ impl ServerEngine {
         Err(format!("No free port on {ip} ({last})"))
     }
 
-    pub async fn start(&self, app: AppHandle, ip: Option<String>, port: Option<u16>) -> Result<ServerStatus, String> {
+    pub async fn start<R: Runtime>(&self, app: AppHandle<R>, ip: Option<String>, port: Option<u16>) -> Result<ServerStatus, String> {
         if self.running.lock().expect("server lock").is_some() {
             return Ok(self.status());
         }
@@ -824,19 +900,21 @@ impl ServerEngine {
             }
         });
 
-        *self.running.lock().expect("server lock") = Some(Running { addr, shutdown: Some(shutdown_tx), telemetry_task });
+        let name_task = self.spawn_name_recheck(app.clone(), addr);
+        *self.running.lock().expect("server lock") = Some(Running { addr, shutdown: Some(shutdown_tx), telemetry_task, name_task });
         let status = self.status();
         emit_log(&app, "success", "server", format!("Sharing at {}", status.url.clone().unwrap_or_default()));
         let _ = app.emit(EV_STATUS, status.clone());
         Ok(status)
     }
 
-    pub async fn stop(&self, app: AppHandle) -> ServerStatus {
+    pub async fn stop<R: Runtime>(&self, app: AppHandle<R>) -> ServerStatus {
         if let Some(mut r) = self.running.lock().expect("server lock").take() {
             if let Some(tx) = r.shutdown.take() {
                 let _ = tx.send(());
             }
             r.telemetry_task.abort();
+            r.name_task.abort();
             let _ = app.emit(EV_STATS, StatsEvent { speed_bps: 0.0, peak_bps: 0.0, connected: 0, active_transfers: 0, total_bytes: self.telemetry.total_bytes.load(Ordering::Relaxed) });
             emit_log(&app, "info", "server", "Server stopped");
         }
@@ -1002,4 +1080,5 @@ mod tests {
         let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
         let _ = std::fs::remove_dir_all(dir);
     }
+
 }

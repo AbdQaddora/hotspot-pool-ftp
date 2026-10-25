@@ -21,6 +21,8 @@ export interface ServerStatus {
   nameUrl: string | null;
   /** null = not checked yet. */
   nameResolves: boolean | null;
+  /** Why the name is not usable (hosts-file write failed or was cancelled), or null. */
+  nameError: string | null;
   /** http://<laptop-hostname>[:port] when the hotspot DNS resolves it. */
   hostnameUrl: string | null;
 }
