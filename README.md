@@ -129,6 +129,17 @@ The release profile is tuned for size (`opt-level = "z"`, `lto`, `codegen-units 
 
 Windows may prompt to allow the app through the firewall the first time the server starts. Allow it on **private** networks. Only TCP port `80` (or `8080`/`8081`) is used.
 
+## Contributing
+
+Hotspot Pool is open source and contributions are welcome: testing on different laptops, phones and networks, bug fixes and new features.
+
+- **`main`** holds released code only; **`dev`** is where development happens; each feature or fix lives on its own branch cut from `dev`.
+- **Bug fix:** open an issue first with the *Bug report* template (include the diagnostics report from the Share Wi-Fi tab). Once it is confirmed, branch from `dev` as `fix/<issue>-<name>` and open a pull request **against `dev`** with `Fixes #<issue>` in the description.
+- **Feature:** open a *Feature request* issue to discuss it, branch from `dev` as `feat/<name>`, and open a pull request **against `dev`**.
+- Experimental work that is not stable yet stays on its own long-running branch (currently `ttl`, the "get past sharing blocks" feature) until it is ready for `dev`.
+
+The full guide, including the checks to run before a pull request and the Windows-specific pitfalls, is in [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
-MIT
+MIT, see [LICENSE](LICENSE).
